@@ -1,5 +1,5 @@
-import { Fragment, useState } from 'react';
-import { connect } from '../game/session.js';
+import { Fragment, useState, type FormEvent } from 'react';
+import { connect } from '../game/session.ts';
 
 const KEYS = [
   ['클릭', '조준, 사격'], ['우클릭', '조준 (누르고 있기)'], ['WASD', '이동'], ['Shift', '천천히 걷기'],
@@ -8,7 +8,7 @@ const KEYS = [
 
 export default function RangePanel() {
   const [nick, setNick] = useState('');
-  const submit = e => {
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     if (nick.trim()) connect(nick.trim());
   };

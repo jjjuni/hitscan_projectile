@@ -1,6 +1,28 @@
 // Shared by client and server. Times in ms, spread/kick in radians.
-// spread: hip-fire cone, adsSpread: aimed cone, kick: vertical camera recoil per shot, kickH: random horizontal.
-export const WEAPONS = {
+export type WeaponKind = 'rifle' | 'smg' | 'shotgun' | 'sniper';
+
+export interface Weapon {
+  name: string;
+  mag: number;
+  fireMs: number;
+  reloadMs: number;
+  auto: boolean;
+  pellets: number;
+  damage: number;
+  headMul: number;
+  range: number;
+  spread: number;     // hip-fire cone
+  adsSpread: number;  // aimed cone
+  kick: number;       // vertical camera recoil per shot
+  kickH: number;      // random horizontal recoil
+  recover: number;    // how fast the aim settles back after firing
+  adsFov: number;
+  adsMs: number;
+  speed: number;      // movement multiplier
+  scope?: boolean;
+}
+
+export const WEAPONS: Record<WeaponKind, Weapon> = {
   rifle: {
     name: 'M4A1', mag: 30, fireMs: 85, reloadMs: 2200, auto: true, pellets: 1,
     damage: 22, headMul: 2, range: 200,
@@ -26,5 +48,7 @@ export const WEAPONS = {
     adsFov: 15, adsMs: 300, speed: 0.85, scope: true,
   },
 };
-export const SLOTS = ['rifle', 'smg', 'shotgun', 'sniper'];
+export const SLOTS: WeaponKind[] = ['rifle', 'smg', 'shotgun', 'sniper'];
 export const SWITCH_MS = 350;
+export const isWeapon = (v: unknown): v is WeaponKind => typeof v === 'string' && Object.hasOwn(WEAPONS, v);
+export const fullMags = () => Object.fromEntries(SLOTS.map(k => [k, WEAPONS[k].mag])) as Record<WeaponKind, number>;

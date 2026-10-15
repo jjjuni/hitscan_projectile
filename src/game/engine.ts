@@ -1,12 +1,42 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { MAP, EYE, CROUCH_EYE, PLAYER_H, CROUCH_H, PLAYER_R, rayAABB, rayPlayer } from '../../shared/map.js';
-import { WEAPONS, SLOTS, SWITCH_MS } from '../../shared/weapons.js';
-import { levelBox, makeGun, makeSoldier, holeMaterial } from './models.js';
-import { listener, SOUNDS, SHOT_VOLUME, playLocal, playAt, unlockAudio } from './sound.js';
+import { MAP, EYE, CROUCH_EYE, PLAYER_H, CROUCH_H, PLAYER_R, rayAABB, rayPlayer, type Box, type Level, type Team, type Vec3 } from '../../shared/map.ts';
+import { WEAPONS, SLOTS, SWITCH_MS, fullMags, type Weapon, type WeaponKind } from '../../shared/weapons.ts';
+import type { ClientMsg, Snap } from '../../shared/protocol.ts';
+import { levelBox, makeGun, makeSoldier, holeMaterial, type Gun, type Soldier } from './models.ts';
+import { listener, SOUNDS, SHOT_VOLUME, playLocal, playAt, unlockAudio } from './sound.ts';
 
-const T = (x, z, d = 0.06) => [x - 0.5, 0.2, z, x + 0.5, 2.0, z + d]; // paper target on a stand
-export const RANGE = {
+export interface EngineEls {
+  mount: HTMLElement; crosshair: HTMLElement; hitmarker: HTMLElement;
+  scope: HTMLElement; hurtRing: HTMLElement; popups: HTMLElement;
+}
+export interface EngineHooks {
+  send(msg: ClientMsg): void;
+  onAmmo(ammo: { weapon: WeaponKind; mag: number; reloading: boolean }): void;
+  onRangeHit(): void;
+}
+export type Mode = 'range' | 'lobby' | 'room' | 'game';
+export interface Engine {
+  setMode(mode: Mode): void;
+  startMatch(myId: number, players: { id: number; team: Team; pos: Vec3 }[]): void;
+  backToRange(): void;
+  setAlive(alive: boolean): void;
+  removePlayersExcept(ids: number[]): void;
+  snap(list: Snap[]): void;
+  shot(id: number, ends: Vec3[]): void;
+  hitmark(head: boolean, kill: boolean): void;
+  hurtFrom(id: number): void;
+  killOther(id: number): void;
+  respawn(isMe: boolean, id: number, pos: Vec3): void;
+  dispose(): void;
+}
+type ViewGun = Gun & { ads: THREE.Vector3 };
+type StdMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
+interface Target { box: Box; mesh: StdMesh }
+interface Other { soldier: Soldier; mesh: THREE.Group; target: THREE.Vector3; speed: number; pitch: number; alive: boolean; crouch: boolean }
+
+const T = (x: number, z: number, d = 0.06): Box => [x - 0.5, 0.2, z, x + 0.5, 2.0, z + d]; // paper target on a stand
+export const RANGE: Level & { spawn: Vec3 } = {
   walls: [
     [-17, -1, -97, 17, 0, 15, 'floor'],
     [-17, 0, -97, 17, 6, -96, 'wall'], [-17, 0, -97, -16, 6, 15, 'wall'], [16, 0, -97, 17, 6, 15, 'wall'], [-17, 0, 14, 17, 6, 15, 'wall'],
@@ -19,17 +49,19 @@ export const RANGE = {
   look: [0, EYE, -10],
 };
 const BASE_SPEED = 6, JUMP = 6, GRAVITY = 18, FOV = 75;
-const rand = (a, b) => a + Math.random() * (b - a);
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const fullMags = () => Object.fromEntries(SLOTS.map(k => [k, WEAPONS[k].mag]));
-const div = (cls, text = '') => Object.assign(document.createElement('div'), { className: cls, textContent: text });
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
+const div = (cls: string, text: string | number = '') => Object.assign(document.createElement('div'), { className: cls, textContent: text });
 
 // The three.js game: rendering, input, movement, shooting, other players.
 // React owns the UI around it; this talks back through `hooks` and is driven through the returned API.
 // els: { mount, crosshair, hitmarker, scope, hurtRing, popups } DOM nodes; hooks: { send, onAmmo, onRangeHit }
-export function createEngine(els, hooks) {
-  const cleanups = [];
-  const listen = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); cleanups.push(() => target.removeEventListener(type, fn, opts)); };
+export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
+  const cleanups: (() => void)[] = [];
+  const listen = <K extends keyof WindowEventMap>(target: Window | Document, type: K, fn: (e: WindowEventMap[K]) => void) => {
+    target.addEventListener(type, fn as EventListener);
+    cleanups.push(() => target.removeEventListener(type, fn as EventListener));
+  };
 
   // --- three.js setup ---
   const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -69,14 +101,14 @@ export function createEngine(els, hooks) {
   const viewRoot = new THREE.Group(); // follows the camera
   viewScene.add(viewRoot);
   const HIP = new THREE.Vector3(0.15, -0.17, -0.4);
-  const viewGuns = {};
+  const viewGuns = {} as Record<WeaponKind, ViewGun>;
   {
     const glove = new THREE.MeshStandardMaterial({ color: 0x1d1b18, roughness: 0.7 });
     const sleeve = new THREE.MeshStandardMaterial({ color: 0x5b5d48, roughness: 0.95 });
     for (const kind of SLOTS) {
-      const gun = makeGun(kind);
+      const gun = makeGun(kind) as ViewGun;
       // gloved hands + sleeves, in gun space so they follow hip/ADS/reload motion
-      for (const [hand, elbow] of [[gun.grip, [0.07, -0.3, 0.28]], [gun.fore, [-0.16, -0.32, gun.fore.z + 0.2]]]) {
+      for (const [hand, elbow] of [[gun.grip, [0.07, -0.3, 0.28]], [gun.fore, [-0.16, -0.32, gun.fore.z + 0.2]]] as [THREE.Vector3, Vec3][]) {
         const e = new THREE.Vector3(...elbow);
         const g = new THREE.Mesh(new THREE.BoxGeometry(0.065, 0.075, 0.1), glove);
         g.position.copy(hand).add(new THREE.Vector3(0, -0.02, 0));
@@ -100,36 +132,37 @@ export function createEngine(els, hooks) {
   });
 
   let level = new THREE.Group();
-  let walls = [], targets = [];
-  function loadLevel(def, spawn) {
+  let walls: Box[] = [], targets: Target[] = [];
+  function loadLevel(def: Level, spawn: Vec3) {
     scene.remove(level);
     level = new THREE.Group();
     scene.add(level);
     walls = def.walls;
     for (const w of walls) level.add(levelBox(w));
     targets = (def.targets || []).map(box => {
-      const mesh = levelBox([...box, 'target']);
+      const mesh = levelBox([box[0], box[1], box[2], box[3], box[4], box[5], 'target']) as StdMesh;
       level.add(mesh);
       level.add(levelBox([box[0] + 0.45, 0, box[2] - 0.1, box[3] - 0.45, box[1], box[5] + 0.1, 'crate'])); // stand
       return { box, mesh };
     });
     setPos(spawn);
-    camera.lookAt(...(def.look ?? [0, EYE, 0])); // game maps face the center
+    const look: Vec3 = def.look ?? [0, EYE, 0]; // game maps face the center
+    camera.lookAt(...look);
   }
 
   // --- local player ---
-  const me = { pos: [0, 0, 0], vel: [0, 0, 0], grounded: false, alive: true, crouch: false, eye: EYE };
-  const gs = { weapon: 'rifle', mag: fullMags(), reloadUntil: 0, switchUntil: 0, lastShot: -1e9, triggerFresh: true };
+  const me = { pos: [0, 0, 0] as Vec3, vel: [0, 0, 0] as Vec3, grounded: false, alive: true, crouch: false, eye: EYE };
+  const gs = { weapon: 'rifle' as WeaponKind, mag: fullMags(), reloadUntil: 0, switchUntil: 0, lastShot: -1e9, triggerFresh: true };
   let ads = 0, bloom = 0, recoilPitch = 0, viewKick = 0, viewKickTarget = 0, bobT = 0;
-  let mode = 'range'; // range | lobby | room | game
-  function setPos(p) {
+  let mode: Mode = 'range';
+  function setPos(p: Vec3) {
     me.pos = [...p];
     me.vel = [0, 0, 0];
     camera.position.set(p[0], p[1] + me.eye, p[2]);
   }
   const canPlay = () => controls.isLocked && me.alive && mode !== 'room';
 
-  const keys = {};
+  const keys: Record<string, boolean> = {};
   listen(window, 'keydown', e => {
     keys[e.code] = true;
     if (!canPlay()) return;
@@ -139,10 +172,10 @@ export function createEngine(els, hooks) {
   });
   listen(window, 'keyup', e => { keys[e.code] = false; });
 
-  const overlaps = (pos, h, w) => !(pos[0] + PLAYER_R <= w[0] || pos[0] - PLAYER_R >= w[3] || pos[1] + h <= w[1] || pos[1] >= w[4] ||
+  const overlaps = (pos: Vec3, h: number, w: Box) => !(pos[0] + PLAYER_R <= w[0] || pos[0] - PLAYER_R >= w[3] || pos[1] + h <= w[1] || pos[1] >= w[4] ||
     pos[2] + PLAYER_R <= w[2] || pos[2] - PLAYER_R >= w[5]);
   // Axis-separated AABB collision against walls; returns grounded.
-  function moveAndCollide(pos, vel, dt, h) {
+  function moveAndCollide(pos: Vec3, vel: Vec3, dt: number, h: number) {
     let grounded = false;
     for (let a = 0; a < 3; a++) {
       pos[a] += vel[a] * dt;
@@ -152,7 +185,7 @@ export function createEngine(els, hooks) {
           if (vel[1] <= 0) { pos[1] = w[4]; grounded = true; } else pos[1] = w[1] - h;
           vel[1] = 0;
         } else {
-          pos[a] = vel[a] > 0 ? w[a] - PLAYER_R : w[a + 3] + PLAYER_R;
+          pos[a] = vel[a] > 0 ? (w[a] as number) - PLAYER_R : (w[a + 3] as number) + PLAYER_R;
         }
       }
     }
@@ -160,7 +193,7 @@ export function createEngine(els, hooks) {
   }
 
   const fwd = new THREE.Vector3(), right = new THREE.Vector3(), up = new THREE.Vector3();
-  function updateMe(dt) {
+  function updateMe(dt: number) {
     const w = WEAPONS[gs.weapon];
     const playing = canPlay();
     // Hold C to crouch; only stand up if there is headroom.
@@ -195,7 +228,7 @@ export function createEngine(els, hooks) {
 
   // --- weapons ---
   const euler = new THREE.Euler(0, 0, 0, 'YXZ');
-  function currentSpread(w) {
+  function currentSpread(w: Weapon) {
     const moving = Math.hypot(me.vel[0], me.vel[2]) / BASE_SPEED;
     let s = w.spread + (w.adsSpread - w.spread) * ads;
     s = s * (1 + moving * 1.5) + moving * 0.02;
@@ -205,12 +238,12 @@ export function createEngine(els, hooks) {
   }
   // A shot queues its kick; the camera eases into it over a few frames instead of snapping.
   const pendingKick = { x: 0, y: 0 };
-  function kickCamera(w) {
+  function kickCamera(w: Weapon) {
     const mul = (1 - ads * 0.35) * (me.crouch ? 0.8 : 1);
     pendingKick.x += w.kick * mul * rand(0.85, 1.15);
     pendingKick.y += rand(-1, 1) * w.kickH * mul;
   }
-  function updateRecoil(dt, now) {
+  function updateRecoil(dt: number, now: number) {
     const w = WEAPONS[gs.weapon];
     const a = 1 - Math.exp(-dt * 22); // ~90% of a kick lands within 0.1s
     let dx = pendingKick.x * a;
@@ -231,7 +264,7 @@ export function createEngine(els, hooks) {
   }
 
   const reportAmmo = () => hooks.onAmmo({ weapon: gs.weapon, mag: gs.mag[gs.weapon], reloading: !!gs.reloadUntil });
-  function startReload(now) {
+  function startReload(now: number) {
     const w = WEAPONS[gs.weapon];
     if (gs.reloadUntil || gs.mag[gs.weapon] >= w.mag || now < gs.switchUntil) return;
     const until = gs.reloadUntil = now + w.reloadMs;
@@ -240,7 +273,7 @@ export function createEngine(els, hooks) {
     // one quiet clack near the end — skipped if a weapon switch cancels the reload
     setTimeout(() => { if (gs.reloadUntil === until) playLocal(SOUNDS.clack, 0.35); }, w.reloadMs * 0.8);
   }
-  function switchWeapon(kind, now) {
+  function switchWeapon(kind: WeaponKind, now: number) {
     if (kind === gs.weapon) return;
     gs.weapon = kind;
     gs.reloadUntil = 0;
@@ -249,12 +282,12 @@ export function createEngine(els, hooks) {
     if (mode === 'game') hooks.send({ t: 'weapon', w: kind });
     reportAmmo();
   }
-  function resetGuns(weapon) {
+  function resetGuns(weapon: WeaponKind) {
     Object.assign(gs, { weapon, mag: fullMags(), reloadUntil: 0, switchUntil: 0 });
     reportAmmo();
   }
 
-  function tracer(o, e) {
+  function tracer(o: Vec3, e: Vec3) {
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...o), new THREE.Vector3(...e)]),
       new THREE.LineBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.7 }),
@@ -262,7 +295,7 @@ export function createEngine(els, hooks) {
     scene.add(line);
     setTimeout(() => { scene.remove(line); line.geometry.dispose(); }, 50);
   }
-  function muzzleFlash(gun) {
+  function muzzleFlash(gun: Gun) {
     gun.flash();
     gun.muzzle.getWorldPosition(muzzleLight.position);
     muzzleLight.intensity = 6;
@@ -271,15 +304,15 @@ export function createEngine(els, hooks) {
   // Bullet holes: stick to the wall/prop/target face the shot ended on, fade out after a while.
   const HOLE_MS = 8000, MAX_HOLES = 150;
   const holeGeo = new THREE.PlaneGeometry(0.08, 0.08);
-  const holes = [];
-  function bulletHole(p) {
+  const holes: { m: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; t0: number }[] = [];
+  function bulletHole(p: Vec3) {
     const E = 0.002;
     const b = [...walls, ...targets.map(t => t.box)].find(b => b[6] !== 'drum' &&
       p[0] > b[0] - E && p[0] < b[3] + E && p[1] > b[1] - E && p[1] < b[4] + E && p[2] > b[2] - E && p[2] < b[5] + E);
     if (!b) return; // hit a player or nothing
     let best = Infinity;
     const n = new THREE.Vector3();
-    for (let a = 0; a < 3; a++) for (const [s, face] of [[-1, b[a]], [1, b[a + 3]]]) {
+    for (let a = 0; a < 3; a++) for (const [s, face] of [[-1, b[a] as number], [1, b[a + 3] as number]]) {
       const d = Math.abs(p[a] - face);
       if (d < best) { best = d; n.set(0, 0, 0).setComponent(a, s); }
     }
@@ -290,24 +323,24 @@ export function createEngine(els, hooks) {
     m.scale.setScalar(rand(0.8, 1.2));
     level.add(m);
     holes.push({ m, t0: performance.now() });
-    if (holes.length > MAX_HOLES) holes.shift().m.removeFromParent();
+    if (holes.length > MAX_HOLES) holes.shift()!.m.removeFromParent();
   }
-  function updateHoles(now) {
-    while (holes.length && now - holes[0].t0 > HOLE_MS) holes.shift().m.removeFromParent();
+  function updateHoles(now: number) {
+    while (holes.length && now - holes[0].t0 > HOLE_MS) holes.shift()!.m.removeFromParent();
     for (const h of holes) h.m.material.opacity = Math.min(1, (HOLE_MS - (now - h.t0)) / 2000);
   }
 
   // Damage direction: a red arc on the screen edge pointing at the shooter, re-aimed every frame as you turn.
   const HURT_MS = 1200;
-  const hurts = [];
-  function hurtFrom(id) {
+  const hurts: { e: HTMLDivElement; from: THREE.Vector3; t0: number }[] = [];
+  function hurtFrom(id: number) {
     const p = others.get(id);
     if (!p) return;
     const e = div('hurt');
     els.hurtRing.append(e);
     hurts.push({ e, from: p.target.clone(), t0: performance.now() }); // latest server position, not the interpolated mesh
   }
-  function updateHurts(now) {
+  function updateHurts(now: number) {
     camera.getWorldDirection(fwd);
     for (let i = hurts.length - 1; i >= 0; i--) {
       const h = hurts[i], k = (now - h.t0) / HURT_MS;
@@ -315,30 +348,30 @@ export function createEngine(els, hooks) {
       const dx = h.from.x - camera.position.x, dz = h.from.z - camera.position.z;
       const ang = Math.atan2(dx * -fwd.z + dz * fwd.x, dx * fwd.x + dz * fwd.z); // 0 = straight ahead, + = to the right
       h.e.style.transform = `rotate(${ang}rad)`;
-      h.e.style.opacity = 1 - k * k;
+      h.e.style.opacity = String(1 - k * k);
     }
   }
 
   // Floating damage numbers (range only): rise and fade over 0.9s at the hit point.
-  const popups = [];
-  function popup(dmg, at, head) {
+  const popups: { e: HTMLDivElement; at: THREE.Vector3; t0: number; dx: number }[] = [];
+  function popup(dmg: number, at: Vec3, head: boolean) {
     const e = div(head ? 'dmg head' : 'dmg', dmg);
     els.popups.append(e);
     popups.push({ e, at: new THREE.Vector3(...at), t0: performance.now(), dx: rand(-14, 14) });
   }
   const projected = new THREE.Vector3();
-  function updatePopups(now) {
+  function updatePopups(now: number) {
     for (let i = popups.length - 1; i >= 0; i--) {
       const p = popups[i], k = (now - p.t0) / 900;
       projected.copy(p.at).project(camera);
       if (k >= 1 || projected.z > 1) { p.e.remove(); popups.splice(i, 1); continue; }
       const x = (projected.x + 1) / 2 * innerWidth + p.dx * k, y = (1 - projected.y) / 2 * innerHeight - 40 * k;
       p.e.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%) scale(${1.2 - 0.3 * k})`;
-      p.e.style.opacity = 1 - k * k;
+      p.e.style.opacity = String(1 - k * k);
     }
   }
-  let hitmarkT;
-  function hitmark(head, kill) {
+  let hitmarkT: ReturnType<typeof setTimeout> | undefined;
+  function hitmark(head: boolean, kill: boolean) {
     const h = els.hitmarker;
     h.className = head ? 'head' : '';
     if (kill) h.classList.add('kill');
@@ -346,7 +379,7 @@ export function createEngine(els, hooks) {
     hitmarkT = setTimeout(() => h.classList.add('hidden'), kill ? 300 : 150);
   }
 
-  function tryFire(now) {
+  function tryFire(now: number) {
     const w = WEAPONS[gs.weapon];
     if (gs.reloadUntil || now < gs.switchUntil || now - gs.lastShot < w.fireMs) return;
     if (!w.auto && !gs.triggerFresh) return;
@@ -359,23 +392,23 @@ export function createEngine(els, hooks) {
     camera.getWorldDirection(fwd);
     right.set(1, 0, 0).applyQuaternion(camera.quaternion);
     up.set(0, 1, 0).applyQuaternion(camera.quaternion);
-    const o = camera.position.toArray();
+    const o = camera.position.toArray() as Vec3;
     const gun = viewGuns[gs.weapon];
-    const from = gun.muzzle.getWorldPosition(new THREE.Vector3()).toArray();
-    const dirs = [];
-    const hits = new Map(); // range target -> { dmg, head, at }
+    const from = gun.muzzle.getWorldPosition(new THREE.Vector3()).toArray() as Vec3;
+    const dirs: Vec3[] = [];
+    const hits = new Map<Target, { dmg: number; head: boolean; at: Vec3 }>();
     for (let i = 0; i < w.pellets; i++) {
       const a = Math.random() * Math.PI * 2, r = Math.sqrt(Math.random()) * spread;
-      const d = fwd.clone().addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize().toArray();
+      const d = fwd.clone().addScaledVector(right, Math.cos(a) * r).addScaledVector(up, Math.sin(a) * r).normalize().toArray() as Vec3;
       dirs.push(d);
-      let t = w.range, tg = null;
+      let t = w.range, tg: Target | null = null;
       for (const b of walls) t = Math.min(t, rayAABB(o, d, b));
       for (const x of targets) { const tt = rayAABB(o, d, x.box); if (tt < t) { t = tt; tg = x; } }
       for (const p of others.values()) {
-        const h = p.alive && rayPlayer(o, d, p.mesh.position.toArray(), p.crouch);
+        const h = p.alive && rayPlayer(o, d, p.mesh.position.toArray() as Vec3, p.crouch);
         if (h && h.t < t) { t = h.t; tg = null; }
       }
-      const end = o.map((v, j) => v + d[j] * t);
+      const end = o.map((v, j) => v + d[j] * t) as Vec3;
       tracer(from, end);
       bulletHole(end);
       if (!tg) continue;
@@ -402,7 +435,7 @@ export function createEngine(els, hooks) {
   }
 
   // Weapon pose: hip <-> ADS, walk bob, recoil kick, reload/switch/pump/bolt motion.
-  function updateViewGun(dt, now) {
+  function updateViewGun(dt: number, now: number) {
     const w = WEAPONS[gs.weapon];
     const wantAds = rmb && canPlay() && !gs.reloadUntil && now >= gs.switchUntil;
     ads = clamp(ads + (wantAds ? 1 : -1) * dt * 1000 / w.adsMs, 0, 1);
@@ -441,7 +474,7 @@ export function createEngine(els, hooks) {
     // Crosshair gap = current spread projected to screen pixels.
     const px = Math.tan(currentSpread(w)) / Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * innerHeight / 2;
     els.crosshair.style.setProperty('--gap', `${Math.max(3, px).toFixed(1)}px`);
-    els.crosshair.style.opacity = mode === 'room' || !me.alive ? 0 : 1 - e;
+    els.crosshair.style.opacity = String(mode === 'room' || !me.alive ? 0 : 1 - e);
   }
 
   // --- shooting input ---
@@ -460,8 +493,8 @@ export function createEngine(els, hooks) {
   controls.addEventListener('unlock', () => { mouseDown = rmb = false; });
 
   // --- other players ---
-  const others = new Map(); // id -> { soldier, mesh, target, speed, pitch, alive, crouch }
-  function addOther(id, team, pos) {
+  const others = new Map<number, Other>();
+  function addOther(id: number, team: Team, pos: Vec3) {
     const soldier = makeSoldier(team);
     soldier.root.position.set(...pos);
     scene.add(soldier.root);
@@ -521,7 +554,7 @@ export function createEngine(els, hooks) {
     // players: [{ id, team, pos }], including me
     startMatch(myId, players) {
       clearOthers();
-      loadLevel(MAP, players.find(p => p.id === myId).pos);
+      loadLevel(MAP, players.find(p => p.id === myId)!.pos);
       for (const p of players) if (p.id !== myId) addOther(p.id, p.team, p.pos);
       Object.assign(me, { alive: true, crouch: false });
       resetGuns('rifle'); // server starts everyone on the rifle
@@ -534,7 +567,7 @@ export function createEngine(els, hooks) {
     },
     setAlive(alive) { me.alive = alive; },
     removePlayersExcept(ids) {
-      for (const id of others.keys()) if (!ids.includes(id)) { scene.remove(others.get(id).mesh); others.delete(id); }
+      for (const [id, p] of others) if (!ids.includes(id)) { scene.remove(p.mesh); others.delete(id); }
     },
     snap(list) {
       for (const [id, pos, yaw, alive, pitch, crouch, weapon] of list) {
@@ -559,14 +592,15 @@ export function createEngine(els, hooks) {
     },
     hitmark,
     hurtFrom,
-    killOther(id) { if (others.has(id)) others.get(id).alive = false; },
+    killOther(id) { const p = others.get(id); if (p) p.alive = false; },
     respawn(isMe, id, pos) {
       if (isMe) {
         Object.assign(me, { alive: true, crouch: false });
         setPos(pos);
         resetGuns(gs.weapon);
-      } else if (others.has(id)) {
+      } else {
         const p = others.get(id);
+        if (!p) return;
         p.target.set(...pos);
         p.mesh.position.set(...pos);
         p.alive = true;

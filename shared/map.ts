@@ -1,12 +1,17 @@
 // Shared by client and server. Boxes are [minX, minY, minZ, maxX, maxY, maxZ, material].
+export type Vec3 = [number, number, number];
+export type Material = 'floor' | 'wall' | 'concrete' | 'building' | 'barrier' | 'sandbag' | 'container' | 'crate' | 'drum' | 'target';
+export type Box = [number, number, number, number, number, number, Material?];
+export type Team = 'A' | 'B';
+
 export const EYE = 1.6, PLAYER_H = 1.8, PLAYER_R = 0.35;
 export const CROUCH_EYE = 1.05, CROUCH_H = 1.25, HEAD = 0.3;
 export const MAX_HP = 100, RESPAWN_MS = 3000;
 
 // Point mirror (x, z) -> (-x, -z): team B gets exactly team A's cover.
-const mirror = b => [-b[3], b[1], -b[5], -b[0], b[4], -b[2], b[6]];
+const mirror = (b: Box): Box => [-b[3], b[1], -b[5], -b[0], b[4], -b[2], b[6]];
 // Team A half (z < 0). Lanes: left x<-12, mid, right x>8.
-const half = [
+const half: Box[] = [
   // spawn cover
   [-14, 0, -40, -5, 3.5, -39.4, 'concrete'], [5, 0, -40, 14, 3.5, -39.4, 'concrete'],
   [-4, 0, -34, 4, 0.9, -33.4, 'barrier'],
@@ -25,7 +30,15 @@ const half = [
   [10, 0, -8, 12, 3, -2, 'concrete'], [16, 0, -16, 21, 0.9, -15.4, 'sandbag'],
   [21, 0, -24, 22, 1, -23, 'drum'], [22, 0, -24.3, 23, 1, -23.3, 'drum'],
 ];
-export const MAP = {
+
+export interface Level {
+  walls: Box[];
+  targets?: Box[];
+  spawn?: Vec3;
+  look?: Vec3;
+}
+
+export const MAP: Level & { spawns: Record<Team, Vec3[]> } = {
   walls: [
     [-40, -1, -70, 40, 0, 70, 'floor'],
     [-26, 0, -51, 26, 6, -50, 'wall'], [-26, 0, 50, 26, 6, 51, 'wall'], [-26, 0, -50, -25, 6, 50, 'wall'], [25, 0, -50, 26, 6, 50, 'wall'],
@@ -39,11 +52,11 @@ export const MAP = {
 };
 
 // Distance along ray o + d*t to box b, or Infinity if missed.
-export function rayAABB(o, d, b) {
+export function rayAABB(o: Vec3, d: Vec3, b: Box): number {
   let tmin = 0, tmax = Infinity;
   for (let i = 0; i < 3; i++) {
     const inv = 1 / d[i];
-    let t1 = (b[i] - o[i]) * inv, t2 = (b[i + 3] - o[i]) * inv;
+    let t1 = ((b[i] as number) - o[i]) * inv, t2 = ((b[i + 3] as number) - o[i]) * inv;
     if (t1 > t2) [t1, t2] = [t2, t1];
     tmin = Math.max(tmin, t1);
     tmax = Math.min(tmax, t2);
@@ -53,7 +66,7 @@ export function rayAABB(o, d, b) {
 }
 
 // Body and head boxes for a player standing (or crouching) with feet at p.
-export function hitBoxes(p, crouch) {
+export function hitBoxes(p: Vec3, crouch: boolean): { body: Box; head: Box } {
   const top = p[1] + (crouch ? CROUCH_H : PLAYER_H);
   return {
     body: [p[0] - PLAYER_R, p[1], p[2] - PLAYER_R, p[0] + PLAYER_R, top - HEAD, p[2] + PLAYER_R],
@@ -62,7 +75,7 @@ export function hitBoxes(p, crouch) {
 }
 
 // Nearest player hit along a ray: { t, head } or null. Head is checked as its own box.
-export function rayPlayer(o, d, p, crouch) {
+export function rayPlayer(o: Vec3, d: Vec3, p: Vec3, crouch: boolean): { t: number; head: boolean } | null {
   const { body, head } = hitBoxes(p, crouch);
   const th = rayAABB(o, d, head), tb = rayAABB(o, d, body);
   if (th === Infinity && tb === Infinity) return null;

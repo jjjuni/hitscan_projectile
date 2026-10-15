@@ -1,8 +1,8 @@
-import { MAX_HP } from '../../shared/map.js';
-import { WEAPONS, SLOTS } from '../../shared/weapons.js';
-import { useStore } from '../store.js';
+import { MAX_HP } from '../../shared/map.ts';
+import { WEAPONS, SLOTS } from '../../shared/weapons.ts';
+import { useStore } from '../store.ts';
 
-const TEAM_CLASS = { A: 'red', B: 'blue' };
+const teamClass = (team?: 'A' | 'B') => (team === 'A' ? 'red' : team === 'B' ? 'blue' : undefined);
 
 // Match HUD: score, kill feed, health.
 export function Hud() {
@@ -12,13 +12,13 @@ export function Hud() {
   const feed = useStore(s => s.feed);
   return (
     <div id="hud">
-      <div id="score"><b id="sA" className="red">{score.A}</b><span id="goal">{room.killLimit}킬 승리</span><b id="sB" className="blue">{score.B}</b></div>
+      <div id="score"><b id="sA" className="red">{score.A}</b><span id="goal">{room?.killLimit}킬 승리</span><b id="sB" className="blue">{score.B}</b></div>
       <div id="feed">
         {feed.map(f => (
           <div key={f.id}>
-            <span className={TEAM_CLASS[f.killer?.team]}>{f.killer?.nick ?? '?'}</span>
+            <span className={teamClass(f.killer?.team)}>{f.killer?.nick ?? '?'}</span>
             <span className="how"> {WEAPONS[f.weapon]?.name ?? ''}{f.head ? ' 헤드샷' : ''} </span>
-            <span className={TEAM_CLASS[f.victim?.team]}>{f.victim?.nick ?? '?'}</span>
+            <span className={teamClass(f.victim?.team)}>{f.victim?.nick ?? '?'}</span>
           </div>
         ))}
       </div>

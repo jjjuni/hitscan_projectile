@@ -1,7 +1,10 @@
-import { useStore } from '../store.js';
-import { actions } from '../game/session.js';
+import type { Team as TeamId } from '../../shared/map.ts';
+import type { RoomDetail, RoomPlayer } from '../../shared/protocol.ts';
+import { useStore } from '../store.ts';
+import { actions } from '../game/session.ts';
 
-function Team({ team, label, room, myId, mine }) {
+interface TeamProps { team: TeamId; label: string; room: RoomDetail; myId: number | null; mine: RoomPlayer }
+function Team({ team, label, room, myId, mine }: TeamProps) {
   const ps = room.players.filter(p => p.team === team);
   return (
     <section className={`team ${team}`}>
@@ -30,10 +33,10 @@ export default function Room() {
   const room = useStore(s => s.room);
   const myId = useStore(s => s.myId);
   const result = useStore(s => s.roomResult);
-  const mine = room.players.find(p => p.id === myId);
-  if (!mine) return null;
+  const mine = room?.players.find(p => p.id === myId);
+  if (!room || !mine) return null;
   const isHost = room.hostId === myId;
-  const count = t => room.players.filter(p => p.team === t).length;
+  const count = (t: TeamId) => room.players.filter(p => p.team === t).length;
   const notReady = room.players.filter(p => p.id !== room.hostId && !p.ready).length;
   const hint = !count('A') || !count('B') ? '양 팀에 1명 이상 있어야 시작할 수 있습니다'
     : notReady ? `${notReady}명이 아직 READY 하지 않았습니다` : isHost ? '시작할 수 있습니다' : '방장이 시작하기를 기다리는 중';

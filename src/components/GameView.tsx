@@ -1,15 +1,16 @@
 import { useEffect, useRef } from 'react';
-import { createEngine } from '../game/engine.js';
-import { attachEngine, engineHooks } from '../game/session.js';
+import { createEngine } from '../game/engine.ts';
+import { attachEngine, engineHooks } from '../game/session.ts';
 
 // Hosts the three.js canvas plus the overlays the engine moves every frame
 // (crosshair gap, hit marker, scope, damage-direction arcs, damage numbers).
 export default function GameView() {
-  const mount = useRef(), crosshair = useRef(), hitmarker = useRef(), scope = useRef(), hurtRing = useRef(), popups = useRef();
+  const mount = useRef<HTMLDivElement>(null), crosshair = useRef<HTMLDivElement>(null), hitmarker = useRef<HTMLDivElement>(null);
+  const scope = useRef<HTMLDivElement>(null), hurtRing = useRef<HTMLDivElement>(null), popups = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const engine = createEngine({
-      mount: mount.current, crosshair: crosshair.current, hitmarker: hitmarker.current,
-      scope: scope.current, hurtRing: hurtRing.current, popups: popups.current,
+      mount: mount.current!, crosshair: crosshair.current!, hitmarker: hitmarker.current!,
+      scope: scope.current!, hurtRing: hurtRing.current!, popups: popups.current!,
     }, engineHooks);
     attachEngine(engine);
     return () => engine.dispose();

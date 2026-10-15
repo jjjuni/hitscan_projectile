@@ -1,0 +1,19 @@
+{
+  // One config for client, shared code and server. Nothing is emitted:
+  // Vite compiles the client, Node runs server.ts directly (type stripping), tsc only checks.
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "skipLibCheck": true
+  },
+  "include": ["src", "shared", "server.ts", "test.ts", "vite.config.ts"]
+}

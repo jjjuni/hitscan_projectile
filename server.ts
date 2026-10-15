@@ -2,32 +2,69 @@ import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { WebSocketServer } from 'ws';
-import { MAP, EYE, CROUCH_EYE, MAX_HP, RESPAWN_MS, rayAABB, rayPlayer } from './shared/map.js';
-import { WEAPONS, SWITCH_MS } from './shared/weapons.js';
+import { WebSocketServer, type WebSocket } from 'ws';
+import type { ViteDevServer } from 'vite';
+import { MAP, EYE, CROUCH_EYE, MAX_HP, RESPAWN_MS, rayAABB, rayPlayer, type Team, type Vec3 } from './shared/map.ts';
+import { WEAPONS, SWITCH_MS, isWeapon, fullMags, type WeaponKind } from './shared/weapons.ts';
+import type { ClientMsg, RoomDetail, RoomInfo, Score, ServerMsg } from './shared/protocol.ts';
+
+interface Room {
+  id: number;
+  title: string;
+  password: string;
+  killLimit: number;
+  mode: 'hitscan';
+  hostId: number;
+  players: Set<number>;
+  playing: boolean;
+  score: Score;
+  game: number; // bumps every match so stale respawn timers can tell
+}
+interface Client {
+  id: number;
+  ws: WebSocket;
+  nick: string;
+  room: Room | null;
+  team: Team;
+  ready: boolean;
+  // match state
+  hp: number;
+  alive: boolean;
+  pos: Vec3;
+  yaw: number;
+  pitch: number;
+  crouch: boolean;
+  weapon: WeaponKind;
+  mag: Record<WeaponKind, number>;
+  lastShot: number;
+  reloadUntil: number;
+  switchAt: number;
+}
+// Incoming JSON is untrusted: every field is checked before use.
+type Incoming = { [K in keyof UnionToFields<ClientMsg>]?: unknown };
+type UnionToFields<U> = { [K in U extends unknown ? keyof U : never]: unknown };
 
 const LAG_MS = 150; // slack for client/server timer drift on fire rate, reload and switch
-const fullMags = () => Object.fromEntries(Object.entries(WEAPONS).map(([k, w]) => [k, w.mag]));
-function settleReload(c, now) {
+function settleReload(c: Client, now: number) {
   if (c.reloadUntil && now >= c.reloadUntil) { c.mag[c.weapon] = WEAPONS[c.weapon].mag; c.reloadUntil = 0; }
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 const DEV = process.argv.includes('--dev');
 const PUB = path.join(path.dirname(fileURLToPath(import.meta.url)), 'dist'); // output of `npm run build`
-const TYPES = {
+const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2',
 };
 const SERVE_CLIENT = DEV || fs.existsSync(PUB); // without dist/ this is a game-server-only deploy (client hosted elsewhere)
 if (!SERVE_CLIENT) console.log('dist/ not found: running as game server only.');
 
-let vite; // dev only: Vite serves and hot-reloads the React client from this same server
+let vite: ViteDevServer | undefined; // dev only: Vite serves and hot-reloads the React client from this same server
 const server = http.createServer((req, res) => {
   if (vite) return vite.middlewares(req, res);
   if (!SERVE_CLIENT) { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end('game server ok'); } // host health checks
-  let p;
-  try { p = decodeURIComponent(new URL(req.url, 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
+  let p: string;
+  try { p = decodeURIComponent(new URL(req.url ?? '/', 'http://x').pathname); } catch { res.writeHead(400); return res.end(); }
   const file = path.join(PUB, p === '/' ? 'index.html' : p);
   if (!file.startsWith(PUB + path.sep)) { res.writeHead(403); return res.end(); }
   fs.readFile(file, (err, data) => {
@@ -37,35 +74,37 @@ const server = http.createServer((req, res) => {
   });
 });
 
-const clients = new Map(); // id -> client
-const rooms = new Map();   // id -> room
+const clients = new Map<number, Client>();
+const rooms = new Map<number, Room>();
 let nextId = 1;
 
-const send = (c, msg) => c.ws.readyState === 1 && c.ws.send(JSON.stringify(msg));
-const str = (v, max) => String(v ?? '').trim().slice(0, max);
-const isVec = (v, n) => Array.isArray(v) && v.length === n && v.every(Number.isFinite);
-const err = (c, msg) => send(c, { t: 'error', msg });
+const send = (c: Client, msg: ServerMsg) => c.ws.readyState === 1 && c.ws.send(JSON.stringify(msg));
+const str = (v: unknown, max: number) => String(v ?? '').trim().slice(0, max);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isVec = (v: unknown): v is Vec3 => Array.isArray(v) && v.length === 3 && v.every(isNum);
+const isTeam = (v: unknown): v is Team => v === 'A' || v === 'B';
+const err = (c: Client, msg: string) => send(c, { t: 'error', msg });
 
-const roomInfo = r => ({ id: r.id, title: r.title, locked: !!r.password, killLimit: r.killLimit, mode: r.mode, playing: r.playing, count: r.players.size });
-const roomDetail = r => ({
+const roomInfo = (r: Room): RoomInfo => ({ id: r.id, title: r.title, locked: !!r.password, killLimit: r.killLimit, mode: r.mode, playing: r.playing, count: r.players.size });
+const members = (r: Room) => [...r.players].map(id => clients.get(id)!);
+const roomDetail = (r: Room): RoomDetail => ({
   ...roomInfo(r), hostId: r.hostId,
-  players: [...r.players].map(id => { const c = clients.get(id); return { id, nick: c.nick, team: c.team, ready: c.ready }; }),
+  players: members(r).map(c => ({ id: c.id, nick: c.nick, team: c.team, ready: c.ready })),
 });
-const members = r => [...r.players].map(id => clients.get(id));
-const teamCount = (r, team) => members(r).filter(c => c.team === team).length;
-const toRoom = (r, msg) => members(r).forEach(c => send(c, msg));
-const randomSpawn = team => [...MAP.spawns[team][Math.floor(Math.random() * MAP.spawns[team].length)]];
+const teamCount = (r: Room, team: Team) => members(r).filter(c => c.team === team).length;
+const toRoom = (r: Room, msg: ServerMsg) => members(r).forEach(c => send(c, msg));
+const randomSpawn = (team: Team): Vec3 => [...MAP.spawns[team][Math.floor(Math.random() * MAP.spawns[team].length)]];
 
 function broadcastLobby() {
   const list = [...rooms.values()].map(roomInfo);
   for (const c of clients.values()) if (c.nick && !c.room) send(c, { t: 'rooms', rooms: list });
 }
-function syncRoom(r) {
+function syncRoom(r: Room) {
   toRoom(r, { t: 'room', room: roomDetail(r) });
   broadcastLobby();
 }
 
-function join(c, r) {
+function join(c: Client, r: Room) {
   c.team = teamCount(r, 'A') <= teamCount(r, 'B') ? 'A' : 'B';
   c.ready = false;
   c.room = r;
@@ -73,26 +112,26 @@ function join(c, r) {
   syncRoom(r);
 }
 
-function leave(c) {
+function leave(c: Client) {
   const r = c.room;
   if (!r) return;
   r.players.delete(c.id);
   c.room = null;
   c.ready = false;
   if (!r.players.size) { rooms.delete(r.id); return broadcastLobby(); }
-  if (r.hostId === c.id) r.hostId = r.players.values().next().value;
+  if (r.hostId === c.id) r.hostId = r.players.values().next().value!;
   if (r.playing && (!teamCount(r, 'A') || !teamCount(r, 'B'))) return endGame(r, teamCount(r, 'A') ? 'A' : 'B');
   syncRoom(r);
 }
 
-function endGame(r, winner) {
+function endGame(r: Room, winner: Team) {
   r.playing = false;
   members(r).forEach(c => { c.ready = false; });
   toRoom(r, { t: 'end', winner, score: r.score });
   syncRoom(r);
 }
 
-const handlers = {
+const handlers: Record<ClientMsg['t'], (c: Client, m: Incoming) => void> = {
   nick(c, m) {
     const n = str(m.name, 16);
     if (!n) return err(c, '닉네임을 입력하세요.');
@@ -106,7 +145,7 @@ const handlers = {
     if (m.secret && !password) return err(c, '비밀번호를 입력하세요.');
     const killLimit = Math.round(Number(m.killLimit));
     if (!(killLimit >= 1 && killLimit <= 100)) return err(c, '킬 수는 1~100 사이여야 합니다.');
-    const r = {
+    const r: Room = {
       id: nextId++, title: str(m.title, 30) || `${c.nick}의 방`, password, killLimit,
       mode: 'hitscan', hostId: c.id, players: new Set(), playing: false, score: { A: 0, B: 0 }, game: 0,
     };
@@ -115,7 +154,7 @@ const handlers = {
   },
   join(c, m) {
     if (!c.nick || c.room) return;
-    const r = rooms.get(m.id);
+    const r = rooms.get(Number(m.id));
     if (!r) return err(c, '존재하지 않는 방입니다.');
     if (r.playing) return err(c, '게임이 진행 중인 방입니다.');
     if (r.players.size >= 8) return err(c, '방이 가득 찼습니다.');
@@ -125,7 +164,7 @@ const handlers = {
   leave(c) { leave(c); },
   team(c, m) {
     const r = c.room;
-    if (!r || r.playing || !['A', 'B'].includes(m.team) || c.team === m.team) return;
+    if (!r || r.playing || !isTeam(m.team) || c.team === m.team) return;
     if (teamCount(r, m.team) >= 4) return err(c, '해당 팀이 가득 찼습니다.');
     c.team = m.team;
     c.ready = false;
@@ -150,21 +189,21 @@ const handlers = {
       Object.assign(p, {
         hp: MAX_HP, alive: true, yaw: 0, pitch: 0, crouch: false, pos: [...MAP.spawns[p.team][idx[p.team]++]],
         weapon: 'rifle', mag: fullMags(), lastShot: 0, reloadUntil: 0, switchAt: 0,
-      });
+      } satisfies Partial<Client>);
     }
     toRoom(r, { t: 'start', room: roomDetail(r), players: members(r).map(p => ({ id: p.id, pos: p.pos })) });
     broadcastLobby();
   },
   // shortcut: client-authoritative movement (no speed/wall checks), move simulation to server if cheating matters.
   pos(c, m) {
-    if (!c.room?.playing || !c.alive || !isVec(m.p, 3) || !Number.isFinite(m.yaw) || !Number.isFinite(m.pitch)) return;
+    if (!c.room?.playing || !c.alive || !isVec(m.p) || !isNum(m.yaw) || !isNum(m.pitch)) return;
     c.pos = m.p;
     c.yaw = m.yaw;
     c.pitch = Math.max(-1.6, Math.min(1.6, m.pitch));
     c.crouch = !!m.crouch;
   },
   weapon(c, m) {
-    if (!c.room?.playing || !c.alive || !Object.hasOwn(WEAPONS, m.w) || c.weapon === m.w) return;
+    if (!c.room?.playing || !c.alive || !isWeapon(m.w) || c.weapon === m.w) return;
     c.weapon = m.w;
     c.reloadUntil = 0;
     c.switchAt = Date.now();
@@ -184,23 +223,25 @@ const handlers = {
     settleReload(c, now);
     if (c.reloadUntil || c.mag[c.weapon] <= 0) return;
     if (now - c.lastShot < w.fireMs - LAG_MS || now - c.switchAt < SWITCH_MS - LAG_MS) return;
-    const dirs = m.dirs.slice(0, w.pellets).filter(d => isVec(d, 3) && Math.hypot(...d) > 0);
+    const dirs = (m.dirs as unknown[]).slice(0, w.pellets).filter(isVec).filter(d => Math.hypot(...d) > 0);
     if (!dirs.length) return;
     c.lastShot = now;
     c.mag[c.weapon]--;
-    const o = [c.pos[0], c.pos[1] + (c.crouch ? CROUCH_EYE : EYE), c.pos[2]];
-    const ends = [], dmg = new Map(); // target -> { amount, head }
+    const o: Vec3 = [c.pos[0], c.pos[1] + (c.crouch ? CROUCH_EYE : EYE), c.pos[2]];
+    const ends: Vec3[] = [];
+    const dmg = new Map<Client, { amount: number; head: boolean }>();
     for (const raw of dirs) {
       const len = Math.hypot(...raw);
-      const d = raw.map(v => v / len);
-      let best = w.range, hit = null;
+      const d = raw.map(v => v / len) as Vec3;
+      let best = w.range;
+      let hit: { p: Client; head: boolean } | null = null;
       for (const b of MAP.walls) best = Math.min(best, rayAABB(o, d, b));
       for (const p of members(r)) {
         if (p === c || !p.alive || p.team === c.team) continue;
         const h = rayPlayer(o, d, p.pos, p.crouch);
         if (h && h.t < best) { best = h.t; hit = { p, head: h.head }; }
       }
-      ends.push(o.map((v, i) => v + d[i] * best));
+      ends.push(o.map((v, i) => v + d[i] * best) as Vec3);
       if (!hit) continue;
       const cur = dmg.get(hit.p) ?? { amount: 0, head: false };
       cur.amount += w.damage * (hit.head ? w.headMul : 1);
@@ -234,16 +275,22 @@ if (DEV) {
 // Game traffic lives on /ws; other upgrades (Vite's hot reload in dev) are left to their own handlers.
 const wss = new WebSocketServer({ noServer: true });
 server.on('upgrade', (req, socket, head) => {
-  if (new URL(req.url, 'http://x').pathname === '/ws') wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
+  if (new URL(req.url ?? '/', 'http://x').pathname === '/ws') wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   else if (!DEV) socket.destroy();
 });
-wss.on('connection', ws => {
-  const c = { id: nextId++, ws, nick: '', room: null, team: 'A', ready: false };
+wss.on('connection', (ws: WebSocket) => {
+  const c: Client = {
+    id: nextId++, ws, nick: '', room: null, team: 'A', ready: false,
+    hp: MAX_HP, alive: false, pos: [0, 0, 0], yaw: 0, pitch: 0, crouch: false,
+    weapon: 'rifle', mag: fullMags(), lastShot: 0, reloadUntil: 0, switchAt: 0,
+  };
   clients.set(c.id, c);
   ws.on('message', raw => {
-    let m;
-    try { m = JSON.parse(raw); } catch { return; }
-    if (m && Object.hasOwn(handlers, m.t)) handlers[m.t](c, m);
+    let m: unknown;
+    try { m = JSON.parse(String(raw)); } catch { return; }
+    if (!m || typeof m !== 'object') return;
+    const t = (m as Incoming).t;
+    if (typeof t === 'string' && Object.hasOwn(handlers, t)) handlers[t as ClientMsg['t']](c, m as Incoming);
   });
   ws.on('close', () => { leave(c); clients.delete(c.id); });
 });

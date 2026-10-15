@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { useStore } from '../store.js';
-import { actions } from '../game/session.js';
+import { useState, type ChangeEvent, type FormEvent } from 'react';
+import type { RoomInfo } from '../../shared/protocol.ts';
+import { useStore } from '../store.ts';
+import { actions } from '../game/session.ts';
 
-function RoomRow({ r }) {
+function RoomRow({ r }: { r: RoomInfo }) {
   const full = r.count >= 8;
   const join = () => {
     const password = r.locked ? prompt('비밀번호') : '';
@@ -21,8 +22,9 @@ function RoomRow({ r }) {
 
 function CreateForm() {
   const [f, setF] = useState({ title: '', killLimit: 20, secret: false, password: '' });
-  const set = k => e => setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
-  const submit = e => {
+  const set = (k: keyof typeof f) => (e: ChangeEvent<HTMLInputElement>) =>
+    setF({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
+  const submit = (e: FormEvent) => {
     e.preventDefault();
     actions.create(f);
   };

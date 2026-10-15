@@ -1,9 +1,9 @@
-import { useStore } from './store.js';
-import GameView from './components/GameView.jsx';
-import RangePanel from './components/RangePanel.jsx';
-import Lobby from './components/Lobby.jsx';
-import Room from './components/Room.jsx';
-import { Hud, WeaponHud, Tally, Center } from './components/Hud.jsx';
+import { useStore } from './store.ts';
+import GameView from './components/GameView.tsx';
+import RangePanel from './components/RangePanel.tsx';
+import Lobby from './components/Lobby.tsx';
+import Room from './components/Room.tsx';
+import { Hud, WeaponHud, Tally, Center } from './components/Hud.tsx';
 
 export default function App() {
   const mode = useStore(s => s.mode);

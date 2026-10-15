@@ -1,24 +1,28 @@
 import * as THREE from 'three';
+import type { Box, Material, Team } from '../../shared/map.ts';
+import type { WeaponKind } from '../../shared/weapons.ts';
+
+type Ctx = CanvasRenderingContext2D;
 
 // ---------- procedural textures (no image downloads) ----------
-const rand = (a, b) => a + Math.random() * (b - a);
-function canvasTex(size, draw) {
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+function canvasTex(size: number, draw: (g: Ctx, s: number) => void) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
-  draw(c.getContext('2d'), size);
+  draw(c.getContext('2d')!, size);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
   return t;
 }
-function speckle(g, s, n, rgb, alpha) {
+function speckle(g: Ctx, s: number, n: number, rgb: string, alpha: number) {
   for (let i = 0; i < n; i++) {
     g.fillStyle = `rgba(${rgb},${rand(0, alpha)})`;
     g.fillRect(rand(0, s), rand(0, s), rand(1, 3), rand(1, 3));
   }
 }
-function stains(g, s, n, rgb, alpha) {
+function stains(g: Ctx, s: number, n: number, rgb: string, alpha: number) {
   for (let i = 0; i < n; i++) {
     const x = rand(0, s), y = rand(0, s), r = rand(s * 0.05, s * 0.25);
     const grd = g.createRadialGradient(x, y, 0, x, y, r);
@@ -28,7 +32,7 @@ function stains(g, s, n, rgb, alpha) {
     g.fillRect(x - r, y - r, r * 2, r * 2);
   }
 }
-function drips(g, s, n, rgb, alpha) { // rain streaks running down from the top
+function drips(g: Ctx, s: number, n: number, rgb: string, alpha: number) { // rain streaks running down from the top
   for (let i = 0; i < n; i++) {
     const x = rand(0, s), len = rand(s * 0.1, s * 0.6);
     const grd = g.createLinearGradient(0, 0, 0, len);
@@ -39,7 +43,7 @@ function drips(g, s, n, rgb, alpha) { // rain streaks running down from the top
   }
 }
 
-const TEX = {
+const TEX: Partial<Record<Material | 'concrete', () => THREE.CanvasTexture>> = {
   concrete: () => canvasTex(512, (g, s) => {
     g.fillStyle = '#8c8d88'; g.fillRect(0, 0, s, s);
     stains(g, s, 14, '60,58,52', 0.18);
@@ -165,7 +169,8 @@ export const holeMaterial = new THREE.MeshBasicMaterial({
 });
 
 // meters per texture tile; null = stretch once per face
-const KINDS = {
+interface Kind { tex?: Material; tile: number | null; roughness: number; metalness?: number; color?: number }
+const KINDS: Record<Material, Kind> = {
   floor: { tile: 4, roughness: 0.95 },
   wall: { tex: 'concrete', tile: 3, roughness: 0.9, color: 0xc8c8c0 },
   concrete: { tile: 2, roughness: 0.9 },
@@ -177,17 +182,17 @@ const KINDS = {
   drum: { tile: null, roughness: 0.5, metalness: 0.4 },
   target: { tile: null, roughness: 0.9 },
 };
-const matCache = {};
-function levelMaterial(kind) {
+const matCache: Partial<Record<Material, THREE.MeshStandardMaterial>> = {};
+function levelMaterial(kind: Material) {
   const k = KINDS[kind] || KINDS.concrete;
   return matCache[kind] ??= new THREE.MeshStandardMaterial({
-    map: TEX[k.tex || kind]?.() ?? TEX.concrete(), roughness: k.roughness, metalness: k.metalness ?? 0, color: k.color ?? 0xffffff,
+    map: TEX[k.tex || kind]?.() ?? TEX.concrete!(), roughness: k.roughness, metalness: k.metalness ?? 0, color: k.color ?? 0xffffff,
   });
 }
 const roofMat = new THREE.MeshStandardMaterial({ color: 0x55534d, roughness: 0.95 });
 
 // Scale each box face's UVs by its size so textures keep a real-world scale.
-function worldUV(geo, w, h, d, tile) {
+function worldUV(geo: THREE.BoxGeometry, w: number, h: number, d: number, tile: number) {
   const uv = geo.attributes.uv;
   const faces = [[d, h], [d, h], [w, d], [w, d], [w, h], [w, h]]; // px nx py ny pz nz
   for (let f = 0; f < 6; f++) for (let v = 0; v < 4; v++) {
@@ -196,19 +201,19 @@ function worldUV(geo, w, h, d, tile) {
   }
 }
 
-export function levelBox(b) {
-  const kind = b[6] || 'concrete';
+export function levelBox(b: Box) {
+  const kind: Material = b[6] || 'concrete';
   const [w, h, d] = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
-  let mesh;
+  let mesh: THREE.Mesh;
   if (kind === 'drum') { // collision stays a box; looks like an oil drum
     mesh = new THREE.Mesh(new THREE.CylinderGeometry(Math.min(w, d) / 2, Math.min(w, d) / 2, h, 20), levelMaterial(kind));
   } else {
     const geo = new THREE.BoxGeometry(w, h, d);
     const tile = KINDS[kind]?.tile;
     if (tile) worldUV(geo, w, h, d, tile);
-    let mat = levelMaterial(kind);
-    if (kind === 'target') mat = mat.clone(); // targets flash individually
-    if (kind === 'building') mat = [mat, mat, roofMat, roofMat, mat, mat];
+    let mat: THREE.Material | THREE.Material[] = levelMaterial(kind);
+    if (kind === 'target') mat = (mat as THREE.MeshStandardMaterial).clone(); // targets flash individually
+    if (kind === 'building') mat = [mat, mat, roofMat, roofMat, mat, mat] as THREE.Material[];
     mesh = new THREE.Mesh(geo, mat);
   }
   mesh.position.set((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
@@ -227,8 +232,8 @@ const M = {
   wood: new THREE.MeshStandardMaterial({ color: 0x6b4426, roughness: 0.55 }),
   lens: new THREE.MeshStandardMaterial({ color: 0x223344, metalness: 0.9, roughness: 0.05, emissive: 0x110000 }),
 };
-const box = (w, h, d) => new THREE.BoxGeometry(w, h, d);
-const cyl = (r, len, seg = 12, r2 = r) => new THREE.CylinderGeometry(r, r2, len, seg).rotateX(Math.PI / 2); // along z; r = front radius
+const box = (w: number, h: number, d: number) => new THREE.BoxGeometry(w, h, d);
+const cyl = (r: number, len: number, seg = 12, r2 = r) => new THREE.CylinderGeometry(r, r2, len, seg).rotateX(Math.PI / 2); // along z; r = front radius
 
 const flashTex = canvasTex(64, (g, s) => {
   const grd = g.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
@@ -241,7 +246,7 @@ const flashTex = canvasTex(64, (g, s) => {
 
 function gunKit() {
   const g = new THREE.Group();
-  const part = (geo, mat, x, y, z, rx = 0, rz = 0) => {
+  const part = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number, rx = 0, rz = 0) => {
     const m = new THREE.Mesh(geo, mat);
     m.position.set(x, y, z);
     m.rotation.set(rx, 0, rz);
@@ -251,8 +256,22 @@ function gunKit() {
   };
   return { g, part };
 }
+export interface Gun {
+  group: THREE.Group;
+  muzzle: THREE.Object3D;
+  stock: THREE.Mesh[];
+  grip: THREE.Vector3;   // right hand
+  fore: THREE.Vector3;   // left hand
+  sight: THREE.Vector3;  // point that sits on the eye line when aiming
+  adsDist: number;       // how far in front of the eye that point sits
+  butt: number;          // z of the butt pad
+  pump?: THREE.Mesh;
+  bolt?: THREE.Group;
+  flash(): void;
+}
+interface GunSpec extends Omit<Gun, 'group' | 'muzzle' | 'flash'> { muzzle: [number, number]; flashSize?: number }
 // Muzzle, flash and the points the hands and eye need.
-function finishGun(g, { muzzle: [my, mz], stock, grip, fore, sight, adsDist, flashSize = 0.22, ...extra }) {
+function finishGun(g: THREE.Group, { muzzle: [my, mz], flashSize = 0.22, ...spec }: GunSpec): Gun {
   const muzzle = new THREE.Object3D();
   muzzle.position.set(0, my, mz);
   g.add(muzzle);
@@ -265,20 +284,21 @@ function finishGun(g, { muzzle: [my, mz], stock, grip, fore, sight, adsDist, fla
   side.scale.set(1.8, 0.6, 1);
   side.position.z = -0.08;
   flash.add(side);
+  let hide: ReturnType<typeof setTimeout>;
   return {
-    group: g, muzzle, stock, grip, fore, sight, adsDist, ...extra,
+    group: g, muzzle, ...spec,
     flash() {
       flash.visible = true;
       flash.rotation.z = Math.random() * Math.PI;
-      clearTimeout(this.t);
-      this.t = setTimeout(() => { flash.visible = false; }, 45);
+      clearTimeout(hide);
+      hide = setTimeout(() => { flash.visible = false; }, 45);
     },
   };
 }
-const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
 
 // All guns: barrel along -z, origin = rear of the receiver, butt pad near z = +0.28.
-const GUNS = {
+const GUNS: Record<WeaponKind, () => Gun> = {
   rifle() { // M4A1 with iron sights
     const { g, part } = gunKit();
     part(box(0.05, 0.055, 0.30), M.metal, 0, 0.028, -0.15);
@@ -406,7 +426,7 @@ const GUNS = {
     return finishGun(g, { muzzle: [0.022, -0.88], stock, grip: V(0, -0.075, 0.02), fore: V(0, -0.045, -0.3), sight: V(0, 0.088, 0.09), adsDist: 0.12, flashSize: 0.3, bolt, butt: 0.34 });
   },
 };
-export const makeGun = kind => GUNS[kind]();
+export const makeGun = (kind: WeaponKind) => GUNS[kind]();
 
 // ---------- jointed soldier ----------
 const SKIN = new THREE.MeshStandardMaterial({ color: 0xc89878, roughness: 0.7 });
@@ -414,17 +434,17 @@ const CLOTH = new THREE.MeshStandardMaterial({ color: 0x5b5d48, roughness: 0.95 
 const CLOTH2 = new THREE.MeshStandardMaterial({ color: 0x4b4f3e, roughness: 0.95 });
 const GEAR = new THREE.MeshStandardMaterial({ color: 0x3a3b30, roughness: 0.85 });
 const BLACK = new THREE.MeshStandardMaterial({ color: 0x1d1b18, roughness: 0.7 });
-const TEAM = { A: 0xa8352c, B: 0x2c58a8 };
+const TEAM: Record<Team, number> = { A: 0xa8352c, B: 0x2c58a8 };
 
-const capsule = (r, len) => new THREE.CapsuleGeometry(r, len, 4, 10);
-const sphere = r => new THREE.SphereGeometry(r, 14, 10);
-function joint(parent, x, y, z) {
+const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, len, 4, 10);
+const sphere = (r: number) => new THREE.SphereGeometry(r, 14, 10);
+function joint(parent: THREE.Object3D, x: number, y: number, z: number) {
   const j = new THREE.Group();
   j.position.set(x, y, z);
   parent.add(j);
   return j;
 }
-function mesh(parent, geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+function mesh(parent: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
   m.rotation.set(rx, ry, rz);
@@ -435,7 +455,7 @@ function mesh(parent, geo, mat, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
 
 const DOWN = new THREE.Vector3(0, -1, 0);
 // Two-bone IK in the parent's space: points upper arm and forearm (both hanging along -y) so the wrist lands on T.
-export function solveArm(shoulder, elbow, T, a, b, pole) {
+export function solveArm(shoulder: THREE.Object3D, elbow: THREE.Object3D, T: THREE.Vector3, a: number, b: number, pole: THREE.Vector3) {
   const S = shoulder.position;
   const d = T.clone().sub(S);
   const dist = Math.min(d.length(), a + b - 1e-4);
@@ -455,8 +475,17 @@ const TWIST = -0.6;
 const ARM_A = 0.34, ARM_B = 0.34;
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
+export interface Soldier {
+  root: THREE.Group;
+  gun: Gun;
+  weapon: WeaponKind;
+  setWeapon(kind: WeaponKind): void;
+  // speed in m/s, pitch in radians (up positive)
+  update(dt: number, speed: number, pitch: number, alive: boolean, crouch: boolean): void;
+}
+
 // Feet at origin, facing -z, 1.8m tall.
-export function makeSoldier(team, weapon = 'rifle') {
+export function makeSoldier(team: Team, weapon: WeaponKind = 'rifle'): Soldier {
   const root = new THREE.Group();
   const body = joint(root, 0, 0, 0); // tilts as a whole when dying
   const hips = joint(body, 0, 0.95, 0);
@@ -532,8 +561,8 @@ export function makeSoldier(team, weapon = 'rifle') {
     return { s, shoulder, elbow };
   });
 
-  let gun;
-  function setWeapon(kind) {
+  let gun: Gun | undefined;
+  function setWeapon(kind: WeaponKind) {
     if (gun) aim.remove(gun.group);
     gun = makeGun(kind);
     const at = new THREE.Vector3(0.1, 0.19, -0.08 - gun.butt); // butt pad on the front of the right shoulder
@@ -548,9 +577,8 @@ export function makeSoldier(team, weapon = 'rifle') {
   }
 
   let phase = 0, fall = 0, crouchT = 0;
-  const self = {
-    root, setWeapon,
-    // speed in m/s, pitch in radians (up positive)
+  const self: Soldier = {
+    root, setWeapon, gun: undefined!, weapon, // filled by setWeapon below
     update(dt, speed, pitch, alive, crouch) {
       crouchT += ((crouch ? 1 : 0) - crouchT) * Math.min(1, dt * 12);
       const c = crouchT;
