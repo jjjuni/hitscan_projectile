@@ -1,15 +1,40 @@
 // Shared by client and server. Boxes are [minX, minY, minZ, maxX, maxY, maxZ, material].
+import type { WeaponKind } from './weapons.ts';
+
 export type Vec3 = [number, number, number];
-export type Material = 'floor' | 'wall' | 'concrete' | 'building' | 'barrier' | 'sandbag' | 'container' | 'crate' | 'drum' | 'target';
+export type Material =
+  | 'floor' | 'wall' | 'concrete' | 'building' | 'barrier' | 'sandbag' | 'container' | 'crate' | 'drum' | 'target'
+  | 'plaster' | 'slab' | 'stairs' | 'table' | 'car';
 export type Box = [number, number, number, number, number, number, Material?];
 export type Team = 'A' | 'B';
 
 export const EYE = 1.6, PLAYER_H = 1.8, PLAYER_R = 0.35;
 export const CROUCH_EYE = 1.05, CROUCH_H = 1.25, HEAD = 0.3;
+export const STEP = 0.45; // ledges up to this high are walked onto (stairs, curbs)
 export const MAX_HP = 100, RESPAWN_MS = 3000;
 
 // Point mirror (x, z) -> (-x, -z): team B gets exactly team A's cover.
-const mirror = (b: Box): Box => [-b[3], b[1], -b[5], -b[0], b[4], -b[2], b[6]];
+export const mirror = (b: Box): Box => [-b[3], b[1], -b[5], -b[0], b[4], -b[2], b[6]];
+export const mirrorPos = (p: Vec3): Vec3 => [-p[0], p[1], -p[2]];
+
+export interface Level {
+  walls: Box[];
+  targets?: Box[];
+  spawn?: Vec3;
+  look?: Vec3;
+  lamps?: [x: number, z: number][]; // sodium lamp posts (visual only), arm points toward x = 0
+}
+// A door fills an opening; closed it is solid, open it swings aside. It hinges at the min or max end of its long axis.
+export interface Door { box: Box; hinge: 'min' | 'max' }
+export interface PickupSpot { kind: WeaponKind; pos: Vec3 }
+export interface GameMap extends Level {
+  name: string;
+  spawns: Record<Team, Vec3[]>;
+  loadout: 'all' | 'pickup'; // all weapons from the start, or a pistol plus whatever you pick up
+  doors?: Door[];
+  pickups?: PickupSpot[];
+}
+
 // Team A half (z < 0). Lanes: left x<-12, mid, right x>8.
 const half: Box[] = [
   // spawn cover
@@ -31,15 +56,9 @@ const half: Box[] = [
   [21, 0, -24, 22, 1, -23, 'drum'], [22, 0, -24.3, 23, 1, -23.3, 'drum'],
 ];
 
-export interface Level {
-  walls: Box[];
-  targets?: Box[];
-  spawn?: Vec3;
-  look?: Vec3;
-  lamps?: [x: number, z: number][]; // sodium lamp posts (visual only), arm points toward x = 0
-}
-
-export const MAP: Level & { spawns: Record<Team, Vec3[]> } = {
+export const YARD: GameMap = {
+  name: '야적장',
+  loadout: 'all',
   walls: [
     [-40, -1, -70, 40, 0, 70, 'floor'],
     [-26, 0, -51, 26, 6, -50, 'wall'], [-26, 0, 50, 26, 6, 51, 'wall'], [-26, 0, -50, -25, 6, 50, 'wall'], [25, 0, -50, 26, 6, 50, 'wall'],
@@ -86,3 +105,7 @@ export function rayPlayer(o: Vec3, d: Vec3, p: Vec3, crouch: boolean): { t: numb
   if (th === Infinity && tb === Infinity) return null;
   return th <= tb ? { t: th, head: true } : { t: tb, head: false };
 }
+
+// Everything a ray or a body bumps into right now: static walls plus doors that are shut.
+export const solids = (map: GameMap, doorsOpen: boolean[]): Box[] =>
+  [...map.walls, ...(map.doors ?? []).filter((_, i) => !doorsOpen[i]).map(d => d.box)];

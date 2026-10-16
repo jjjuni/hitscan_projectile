@@ -83,13 +83,14 @@ export const SOUNDS: { shot: Record<WeaponKind, AudioBuffer>; clack: AudioBuffer
     shotgun: gunshot({ crack: 0.9, crackMs: 20, crackCut: 4500, boom: 62, boomAmp: 1.3, boomMs: 120, tail: 0.6, tailMs: 250, tailCut: 1200, echo: 0.3, echoDelay: 0.12 }),
     // sharper than before: brighter, faster crack with less low boom masking it
     sniper: gunshot({ crack: 1.8, crackMs: 9, crackCut: 14000, crackHp: 1200, boom: 55, boomAmp: 1.0, boomMs: 130, tail: 0.5, tailMs: 380, tailCut: 1400, echo: 0.35, echoDelay: 0.18 }),
+    pistol: gunshot({ crack: 1.1, crackMs: 7, crackCut: 8000, crackHp: 600, boom: 190, boomAmp: 0.45, boomMs: 30, tail: 0.22, tailMs: 70, tailCut: 2600, echo: 0.2, echoDelay: 0.07 }),
   },
   clack: mix(0.35, click(0, 1300, 0.8), thunk(0, 150, 0.7), slide(0.015, 0.08, 0.15),
     click(0.1, 900, 1), thunk(0.1, 110, 1.2)), // reload "철-커덕", lower and heavier
   dry: mix(0.1, click(0, 3200, 0.8)),
 };
 // Buffers are all normalized to the same peak; loudness per gun lives here.
-export const SHOT_VOLUME: Record<WeaponKind, number> = { rifle: 0.5, smg: 0.45, shotgun: 0.8, sniper: 0.65 };
+export const SHOT_VOLUME: Record<WeaponKind, number> = { rifle: 0.5, smg: 0.45, shotgun: 0.8, sniper: 0.65, pistol: 0.4 };
 
 export function unlockAudio() {
   if (ctx.state !== 'running') ctx.resume();

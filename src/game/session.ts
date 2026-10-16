@@ -1,4 +1,5 @@
 import { MAX_HP, type Team } from '../../shared/map.ts';
+import type { MapId } from '../../shared/maps.ts';
 import type { ClientMsg, ServerMsg } from '../../shared/protocol.ts';
 import { getState, setState, type FeedItem } from '../store.ts';
 import type { Engine, EngineHooks, Mode } from './engine.ts';
@@ -48,7 +49,8 @@ export function connect(nick: string) {
 }
 
 export const actions = {
-  create: (f: { title: string; secret: boolean; password: string; killLimit: number | string }) => send({ t: 'create', ...f }),
+  create: (f: { title: string; secret: boolean; password: string; killLimit: number | string; map: MapId }) => send({ t: 'create', ...f }),
+  map: (map: MapId) => send({ t: 'map', map }),
   join: (id: number, password: string) => send({ t: 'join', id, password }),
   team: (team: Team) => send({ t: 'team', team }),
   ready: () => send({ t: 'ready' }),
@@ -78,11 +80,14 @@ const on: { [K in ServerMsg['t']]: (m: Extract<ServerMsg, { t: K }>) => void } =
   start(m) {
     setState({ room: m.room, score: { A: 0, B: 0 }, hp: MAX_HP, roomResult: '' });
     const { myId } = getState();
-    engine.startMatch(myId!, m.players.map(p => ({ ...p, team: nickOf(p.id)!.team })));
+    engine.startMatch(myId!, m.players.map(p => ({ ...p, team: nickOf(p.id)!.team })), m.room.map, m.doors, m.pickups);
     setMode('game');
     center(`${TEAM_NAME[nickOf(myId)!.team]} 팀입니다. 화면을 클릭해 시작하세요`, 2500);
   },
   snap(m) { engine.snap(m.p); },
+  door(m) { engine.setDoor(m.id, m.open); },
+  pickups(m) { engine.setPickups(m.pickups); },
+  inv(m) { engine.setInventory(m.inv, m.weapon); },
   shot(m) { engine.shot(m.id, m.e); },
   hitmark(m) { engine.hitmark(m.head, m.kill); },
   hp(m) {

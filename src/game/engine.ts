@@ -1,24 +1,28 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { MAP, EYE, CROUCH_EYE, PLAYER_H, CROUCH_H, PLAYER_R, rayAABB, rayPlayer, type Box, type Level, type Team, type Vec3 } from '../../shared/map.ts';
+import { EYE, CROUCH_EYE, PLAYER_H, CROUCH_H, PLAYER_R, STEP, rayAABB, rayPlayer, solids, type Box, type GameMap, type Level, type Team, type Vec3 } from '../../shared/map.ts';
+import { MAPS, type MapId } from '../../shared/maps.ts';
 import { WEAPONS, SLOTS, SWITCH_MS, fullMags, type Weapon, type WeaponKind } from '../../shared/weapons.ts';
-import type { ClientMsg, Snap } from '../../shared/protocol.ts';
-import { levelBox, lampPost, skyGradient, makeGun, makeSoldier, holeMaterial, type Gun, type Soldier } from './models.ts';
+import type { ClientMsg, Pickup, Snap } from '../../shared/protocol.ts';
+import { levelBox, lampPost, skyGradient, doorMesh, pickupMesh, makeGun, makeSoldier, holeMaterial, type Gun, type Soldier } from './models.ts';
 import { listener, SOUNDS, SHOT_VOLUME, playLocal, playAt, unlockAudio } from './sound.ts';
 
 export interface EngineEls {
   mount: HTMLElement; crosshair: HTMLElement; hitmarker: HTMLElement;
-  scope: HTMLElement; hurtRing: HTMLElement; popups: HTMLElement;
+  scope: HTMLElement; hurtRing: HTMLElement; popups: HTMLElement; prompt: HTMLElement;
 }
 export interface EngineHooks {
   send(msg: ClientMsg): void;
-  onAmmo(ammo: { weapon: WeaponKind; mag: number; reloading: boolean }): void;
+  onAmmo(ammo: { weapon: WeaponKind; mag: number; reloading: boolean; inv: WeaponKind[] }): void;
   onRangeHit(): void;
 }
 export type Mode = 'range' | 'lobby' | 'room' | 'game';
 export interface Engine {
   setMode(mode: Mode): void;
-  startMatch(myId: number, players: { id: number; team: Team; pos: Vec3 }[]): void;
+  startMatch(myId: number, players: { id: number; team: Team; pos: Vec3 }[], map: MapId, doors: boolean[], pickups: Pickup[]): void;
+  setDoor(id: number, open: boolean): void;
+  setPickups(list: Pickup[]): void;
+  setInventory(inv: WeaponKind[], weapon: WeaponKind): void;
   backToRange(): void;
   setAlive(alive: boolean): void;
   removePlayersExcept(ids: number[]): void;
@@ -33,6 +37,7 @@ export interface Engine {
 type ViewGun = Gun & { ads: THREE.Vector3 };
 type StdMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
 interface Target { box: Box; mesh: StdMesh }
+interface DoorObj { pivot: THREE.Group; base: number; sign: number; t: number; center: Vec3 }
 interface Other { soldier: Soldier; mesh: THREE.Group; target: THREE.Vector3; fwd: number; side: number; pitch: number; alive: boolean; crouch: boolean }
 
 const T = (x: number, z: number, d = 0.06): Box => [x - 0.5, 0.2, z, x + 0.5, 2.0, z + d]; // paper target on a stand
@@ -88,7 +93,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   sun.position.set(30, 45, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
-  Object.assign(sun.shadow.camera, { left: -65, right: 65, top: 65, bottom: -65, near: 1, far: 160 });
+  Object.assign(sun.shadow.camera, { left: -95, right: 95, top: 95, bottom: -95, near: 1, far: 220 });
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.04;
   scene.add(sun);
@@ -135,13 +140,22 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   });
 
   let level = new THREE.Group();
-  let walls: Box[] = [], targets: Target[] = [];
+  let staticWalls: Box[] = [], walls: Box[] = [], targets: Target[] = []; // walls = static walls + closed doors
+  let curMap: GameMap | null = null, doorsOpen: boolean[] = [], doorObjs: DoorObj[] = [];
+  const pickupObjs = new Map<number, { data: Pickup; mesh: THREE.Group }>();
   function loadLevel(def: Level, spawn: Vec3) {
     scene.remove(level);
     level = new THREE.Group();
     scene.add(level);
-    walls = def.walls;
-    for (const w of walls) level.add(levelBox(w));
+    staticWalls = def.walls;
+    for (const w of staticWalls) level.add(levelBox(w));
+    doorObjs = ((def as Partial<GameMap>).doors ?? []).map((d, i) => {
+      const o = doorMesh(d), b = d.box;
+      level.add(o.frame, o.pivot);
+      return { ...o, t: doorsOpen[i] ? 1 : 0, center: [(b[0] + b[3]) / 2, b[1], (b[2] + b[5]) / 2] as Vec3 };
+    });
+    walls = curMap ? solids(curMap, doorsOpen) : staticWalls;
+    pickupObjs.clear();
     for (const [x, z] of def.lamps ?? []) level.add(lampPost(x, z));
     targets = (def.targets || []).map(box => {
       const mesh = levelBox([box[0], box[1], box[2], box[3], box[4], box[5], 'target']) as StdMesh;
@@ -156,14 +170,16 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
 
   // --- local player ---
   const me = { pos: [0, 0, 0] as Vec3, vel: [0, 0, 0] as Vec3, grounded: false, alive: true, crouch: false, eye: EYE };
-  const gs = { weapon: 'rifle' as WeaponKind, mag: fullMags(), reloadUntil: 0, switchUntil: 0, lastShot: -1e9, triggerFresh: true };
+  const gs = { weapon: 'rifle' as WeaponKind, inv: [...SLOTS], mag: fullMags(), reloadUntil: 0, switchUntil: 0, lastShot: -1e9, triggerFresh: true };
   let ads = 0, bloom = 0, recoilPitch = 0, viewKick = 0, viewKickTarget = 0, bobT = 0;
   let mode: Mode = 'range';
   function setPos(p: Vec3) {
     me.pos = [...p];
     me.vel = [0, 0, 0];
-    camera.position.set(p[0], p[1] + me.eye, p[2]);
+    camY = p[1] + me.eye;
+    camera.position.set(p[0], camY, p[2]);
   }
+  let camY = 0; // eye height smoothed so stairs feel like steps, not teleports
   const canPlay = () => controls.isLocked && me.alive && mode !== 'room';
 
   const keys: Record<string, boolean> = {};
@@ -171,7 +187,8 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     keys[e.code] = true;
     if (!canPlay()) return;
     if (e.code === 'KeyR') startReload(performance.now());
-    const slot = SLOTS[+e.key - 1];
+    if (e.code === 'KeyF') nearestUse()?.act();
+    const slot = gs.inv[+e.key - 1];
     if (slot) switchWeapon(slot, performance.now());
   });
   listen(window, 'keyup', e => { keys[e.code] = false; });
@@ -189,6 +206,14 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
           if (vel[1] <= 0) { pos[1] = w[4]; grounded = true; } else pos[1] = w[1] - h;
           vel[1] = 0;
         } else {
+          // Walk up low ledges (stairs, curbs, door sills) instead of stopping, if there is room on top.
+          const lift = w[4] - pos[1];
+          if (lift > 0 && lift <= STEP && vel[1] <= 0) {
+            const y = pos[1];
+            pos[1] = w[4];
+            if (!walls.some(b => overlaps(pos, h, b))) { grounded = true; continue; }
+            pos[1] = y;
+          }
           pos[a] = vel[a] > 0 ? (w[a] as number) - PLAYER_R : (w[a + 3] as number) + PLAYER_R;
         }
       }
@@ -227,7 +252,8 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     me.vel[2] += (wz - me.vel[2]) * k;
     me.vel[1] -= GRAVITY * dt;
     me.grounded = moveAndCollide(me.pos, me.vel, dt, me.crouch ? CROUCH_H : PLAYER_H);
-    camera.position.set(me.pos[0], me.pos[1] + me.eye, me.pos[2]);
+    camY += (me.pos[1] + me.eye - camY) * Math.min(1, dt * 18);
+    camera.position.set(me.pos[0], camY, me.pos[2]);
   }
 
   // --- weapons ---
@@ -267,7 +293,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     camera.quaternion.setFromEuler(euler);
   }
 
-  const reportAmmo = () => hooks.onAmmo({ weapon: gs.weapon, mag: gs.mag[gs.weapon], reloading: !!gs.reloadUntil });
+  const reportAmmo = () => hooks.onAmmo({ weapon: gs.weapon, mag: gs.mag[gs.weapon], reloading: !!gs.reloadUntil, inv: gs.inv });
   function startReload(now: number) {
     const w = WEAPONS[gs.weapon];
     if (gs.reloadUntil || gs.mag[gs.weapon] >= w.mag || now < gs.switchUntil) return;
@@ -311,7 +337,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   const holes: { m: THREE.Mesh<THREE.PlaneGeometry, THREE.MeshBasicMaterial>; t0: number }[] = [];
   function bulletHole(p: Vec3) {
     const E = 0.002;
-    const b = [...walls, ...targets.map(t => t.box)].find(b => b[6] !== 'drum' &&
+    const b = [...staticWalls, ...targets.map(t => t.box)].find(b => b[6] !== 'drum' &&
       p[0] > b[0] - E && p[0] < b[3] + E && p[1] > b[1] - E && p[1] < b[4] + E && p[2] > b[2] - E && p[2] < b[5] + E);
     if (!b) return; // hit a player or nothing
     let best = Infinity;
@@ -496,6 +522,41 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   listen(window, 'contextmenu', e => { if (controls.isLocked || e.target === renderer.domElement) e.preventDefault(); });
   controls.addEventListener('unlock', () => { mouseDown = rmb = false; });
 
+  // --- doors and weapons on the ground (F) ---
+  const USE_RANGE = 2; // a little tighter than the server's check
+  function nearestUse(): { label: string; act: () => void } | null {
+    if (mode !== 'game' || !me.alive) return null;
+    let best = USE_RANGE, pick: { label: string; act: () => void } | null = null;
+    const consider = (p: Vec3, label: string, act: () => void) => {
+      const dist = Math.hypot(p[0] - me.pos[0], p[2] - me.pos[2]);
+      if (dist < best && Math.abs(p[1] - me.pos[1]) < 2) { best = dist; pick = { label, act }; }
+    };
+    doorObjs.forEach((d, i) => consider(d.center, doorsOpen[i] ? '문 닫기' : '문 열기', () => hooks.send({ t: 'door', id: i })));
+    for (const { data } of pickupObjs.values()) consider(data.pos, `${WEAPONS[data.kind].name} 줍기`, () => hooks.send({ t: 'pickup', id: data.id }));
+    return pick;
+  }
+  let promptText = '';
+  function updateUse(dt: number) {
+    doorObjs.forEach((d, i) => {
+      d.t += ((doorsOpen[i] ? 1 : 0) - d.t) * Math.min(1, dt * 8);
+      d.pivot.rotation.y = d.base + d.sign * d.t * Math.PI / 2;
+    });
+    for (const { mesh } of pickupObjs.values()) mesh.children[1].scale.setScalar(1 + Math.sin(performance.now() / 300) * 0.08); // ring pulse
+    const use = nearestUse();
+    const text = use ? `F  ${use.label}` : '';
+    if (text !== promptText) { promptText = text; els.prompt.textContent = text; }
+  }
+  function setPickups(list: Pickup[]) {
+    for (const [id, o] of pickupObjs) if (!list.some(p => p.id === id)) { level.remove(o.mesh); pickupObjs.delete(id); }
+    for (const p of list) {
+      if (pickupObjs.has(p.id)) continue;
+      const mesh = pickupMesh(p.kind);
+      mesh.position.set(...p.pos);
+      level.add(mesh);
+      pickupObjs.set(p.id, { data: p, mesh });
+    }
+  }
+
   // --- other players ---
   const others = new Map<number, Other>();
   function addOther(id: number, team: Team, pos: Vec3) {
@@ -543,6 +604,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     updatePopups(now);
     updateHoles(now);
     updateHurts(now);
+    updateUse(dt);
     renderer.clear();
     renderer.render(scene, camera);
     renderer.clearDepth();
@@ -556,18 +618,37 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
       if (mode === 'room') controls.unlock();
     },
     // players: [{ id, team, pos }], including me
-    startMatch(myId, players) {
+    startMatch(myId, players, mapId, doors, pickups) {
       clearOthers();
-      loadLevel(MAP, players.find(p => p.id === myId)!.pos);
+      curMap = MAPS[mapId];
+      doorsOpen = [...doors];
+      loadLevel(curMap, players.find(p => p.id === myId)!.pos);
+      setPickups(pickups);
       for (const p of players) if (p.id !== myId) addOther(p.id, p.team, p.pos);
       Object.assign(me, { alive: true, crouch: false });
-      resetGuns('rifle'); // server starts everyone on the rifle
+      gs.inv = curMap.loadout === 'all' ? [...SLOTS] : ['pistol']; // the server's 'inv' message confirms this
+      resetGuns(gs.inv[0]);
     },
     backToRange() {
       clearOthers();
+      curMap = null;
+      doorsOpen = [];
       me.alive = true;
-      resetGuns(gs.weapon);
+      gs.inv = [...SLOTS];
+      resetGuns('rifle');
       loadLevel(RANGE, RANGE.spawn);
+    },
+    setDoor(id, open) {
+      doorsOpen[id] = open;
+      if (curMap) walls = solids(curMap, doorsOpen);
+    },
+    setPickups,
+    setInventory(inv, weapon) {
+      for (const k of inv) if (!gs.inv.includes(k)) gs.mag[k] = WEAPONS[k].mag; // freshly picked up: full mag
+      gs.inv = [...inv];
+      if (weapon !== gs.weapon) Object.assign(gs, { weapon, reloadUntil: 0, switchUntil: performance.now() + SWITCH_MS });
+      ads = 0;
+      reportAmmo();
     },
     setAlive(alive) { me.alive = alive; },
     removePlayersExcept(ids) {

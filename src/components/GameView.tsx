@@ -6,11 +6,11 @@ import { attachEngine, engineHooks } from '../game/session.ts';
 // (crosshair gap, hit marker, scope, damage-direction arcs, damage numbers).
 export default function GameView() {
   const mount = useRef<HTMLDivElement>(null), crosshair = useRef<HTMLDivElement>(null), hitmarker = useRef<HTMLDivElement>(null);
-  const scope = useRef<HTMLDivElement>(null), hurtRing = useRef<HTMLDivElement>(null), popups = useRef<HTMLDivElement>(null);
+  const scope = useRef<HTMLDivElement>(null), hurtRing = useRef<HTMLDivElement>(null), popups = useRef<HTMLDivElement>(null), prompt = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const engine = createEngine({
       mount: mount.current!, crosshair: crosshair.current!, hitmarker: hitmarker.current!,
-      scope: scope.current!, hurtRing: hurtRing.current!, popups: popups.current!,
+      scope: scope.current!, hurtRing: hurtRing.current!, popups: popups.current!, prompt: prompt.current!,
     }, engineHooks);
     attachEngine(engine);
     return () => engine.dispose();
@@ -23,6 +23,7 @@ export default function GameView() {
       <div id="hurtRing" ref={hurtRing} />
       <div id="crosshair" ref={crosshair}><i /><i /><i /><i /></div>
       <div id="hitmarker" className="hidden" ref={hitmarker}>✕</div>
+      <div id="usePrompt" ref={prompt} />
     </>
   );
 }

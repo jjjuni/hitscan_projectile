@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from 'react';
-import type { WeaponKind } from '../shared/weapons.ts';
+import { SLOTS, type WeaponKind } from '../shared/weapons.ts';
 import type { RoomDetail, RoomInfo, RoomPlayer, Score } from '../shared/protocol.ts';
 import type { Mode } from './game/engine.ts';
 
@@ -13,7 +13,7 @@ export interface State {
   roomResult: string;
   score: Score;
   hp: number;
-  ammo: { weapon: WeaponKind; mag: number; reloading: boolean };
+  ammo: { weapon: WeaponKind; mag: number; reloading: boolean; inv: WeaponKind[] };
   feed: FeedItem[];
   center: string;
   rangeHits: number;
@@ -29,7 +29,7 @@ let state: State = {
   roomResult: '',
   score: { A: 0, B: 0 },
   hp: 100,
-  ammo: { weapon: 'rifle', mag: 30, reloading: false },
+  ammo: { weapon: 'rifle', mag: 30, reloading: false, inv: [...SLOTS] },
   feed: [],
   center: '',
   rangeHits: 0,

@@ -1,5 +1,5 @@
 // Shared by client and server. Times in ms, spread/kick in radians.
-export type WeaponKind = 'rifle' | 'smg' | 'shotgun' | 'sniper';
+export type WeaponKind = 'rifle' | 'smg' | 'shotgun' | 'sniper' | 'pistol';
 
 export interface Weapon {
   name: string;
@@ -41,6 +41,12 @@ export const WEAPONS: Record<WeaponKind, Weapon> = {
     spread: 0.075, adsSpread: 0.055, kick: 0.06, kickH: 0.012, recover: 5,
     adsFov: 62, adsMs: 200, speed: 0.95,
   },
+  pistol: {
+    name: 'G17', mag: 15, fireMs: 140, reloadMs: 1500, auto: false, pellets: 1,
+    damage: 18, headMul: 2.2, range: 60,
+    spread: 0.028, adsSpread: 0.008, kick: 0.025, kickH: 0.008, recover: 10,
+    adsFov: 62, adsMs: 130, speed: 1.05,
+  },
   sniper: {
     name: 'M24', mag: 5, fireMs: 1400, reloadMs: 3200, auto: false, pellets: 1,
     damage: 90, headMul: 2, range: 300,
@@ -48,7 +54,8 @@ export const WEAPONS: Record<WeaponKind, Weapon> = {
     adsFov: 15, adsMs: 300, speed: 0.85, scope: true,
   },
 };
-export const SLOTS: WeaponKind[] = ['rifle', 'smg', 'shotgun', 'sniper'];
+export const SLOTS: WeaponKind[] = ['rifle', 'smg', 'shotgun', 'sniper', 'pistol'];
+export const MAX_CARRY = 2; // pickup maps: weapons in hand at once (the starting pistol counts)
 export const SWITCH_MS = 350;
 export const isWeapon = (v: unknown): v is WeaponKind => typeof v === 'string' && Object.hasOwn(WEAPONS, v);
 export const fullMags = () => Object.fromEntries(SLOTS.map(k => [k, WEAPONS[k].mag])) as Record<WeaponKind, number>;

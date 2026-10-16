@@ -1,5 +1,5 @@
 import { MAX_HP } from '../../shared/map.ts';
-import { WEAPONS, SLOTS } from '../../shared/weapons.ts';
+import { WEAPONS } from '../../shared/weapons.ts';
 import { useStore } from '../store.ts';
 
 const teamClass = (team?: 'A' | 'B') => (team === 'A' ? 'red' : team === 'B' ? 'blue' : undefined);
@@ -28,11 +28,11 @@ export function Hud() {
 }
 
 export function WeaponHud() {
-  const { weapon, mag, reloading } = useStore(s => s.ammo);
+  const { weapon, mag, reloading, inv } = useStore(s => s.ammo);
   const w = WEAPONS[weapon];
   return (
     <div id="weaponHud">
-      <ol id="slots">{SLOTS.map((k, i) => <li key={k} className={k === weapon ? 'on' : ''}>{i + 1} {WEAPONS[k].name}</li>)}</ol>
+      <ol id="slots">{inv.map((k, i) => <li key={k} className={k === weapon ? 'on' : ''}>{i + 1} {WEAPONS[k].name}</li>)}</ol>
       <div className="ammo"><b id="wMag" className={mag <= Math.ceil(w.mag / 5) ? 'low' : ''}>{mag}</b><span id="wMax">/ {w.mag}</span></div>
       <div><span id="wName">{w.name}</span> <span id="wState">{reloading ? '장전 중' : mag === 0 ? 'R 키로 장전' : ''}</span></div>
     </div>

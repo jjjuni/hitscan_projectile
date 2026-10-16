@@ -1,5 +1,6 @@
 import type { Team as TeamId } from '../../shared/map.ts';
 import type { RoomDetail, RoomPlayer } from '../../shared/protocol.ts';
+import { MAPS, MAP_IDS, type MapId } from '../../shared/maps.ts';
 import { useStore } from '../store.ts';
 import { actions } from '../game/session.ts';
 
@@ -47,6 +48,13 @@ export default function Room() {
           <h2>{room.locked ? '🔒 ' : ''}{room.title}</h2>
           <span className="who">{room.killLimit}킬을 먼저 채운 팀이 승리 (Hitscan)</span>
         </header>
+        <div className="mapPick">
+          <span>맵</span>
+          {isHost
+            ? <select value={room.map} onChange={e => actions.map(e.target.value as MapId)}>{MAP_IDS.map(id => <option key={id} value={id}>{MAPS[id].name}</option>)}</select>
+            : <b>{MAPS[room.map].name}</b>}
+          <span className="hint">{MAPS[room.map].loadout === 'pickup' ? '권총으로 시작, 건물 안 무기를 F로 주워 최대 2자루' : '모든 무기로 시작'}</span>
+        </div>
         <div className="versus">
           <Team team="A" label="RED" room={room} myId={myId} mine={mine} />
           <div className="vs" aria-hidden="true">VS</div>

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import type { Box, Material, Team } from '../../shared/map.ts';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import type { Box, Door, Material, Team } from '../../shared/map.ts';
 import type { WeaponKind } from '../../shared/weapons.ts';
 
 type Ctx = CanvasRenderingContext2D;
@@ -138,6 +139,39 @@ const TEX: Partial<Record<Material | 'concrete', () => THREE.CanvasTexture>> = {
     for (const y of [s * 0.3, s * 0.68]) g.fillRect(0, y, s, 8); // rolling hoops
     g.fillStyle = '#d0b020'; g.fillRect(0, s * 0.45, s, 14);
   }),
+  plaster: () => canvasTex(512, (g, s) => { // worn rendered wall, darker grime band at the bottom
+    g.fillStyle = '#9e9586'; g.fillRect(0, 0, s, s);
+    stains(g, s, 16, '70,62,52', 0.22);
+    drips(g, s, 16, '60,54,46', 0.3);
+    speckle(g, s, 9000, '50,46,40', 0.2);
+    speckle(g, s, 3000, '220,214,200', 0.15);
+    const grime = g.createLinearGradient(0, s * 0.8, 0, s);
+    grime.addColorStop(0, 'rgba(40,34,28,0)'); grime.addColorStop(1, 'rgba(40,34,28,.55)');
+    g.fillStyle = grime; g.fillRect(0, s * 0.8, s, s * 0.2);
+    g.strokeStyle = 'rgba(40,36,30,.5)'; g.lineWidth = 1.2;
+    for (let i = 0; i < 4; i++) { // hairline cracks
+      g.beginPath(); let x = rand(0, s), y = rand(0, s); g.moveTo(x, y);
+      for (let k = 0; k < 6; k++) { x += rand(-25, 25); y += rand(5, 30); g.lineTo(x, y); }
+      g.stroke();
+    }
+  }),
+  slab: () => canvasTex(512, (g, s) => { // dirty floor tiles
+    const n = 4, t = s / n;
+    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
+      g.fillStyle = (i + j) % 2 ? '#7c766a' : '#6c665b'; g.fillRect(i * t, j * t, t, t);
+    }
+    speckle(g, s, 7000, '30,28,24', 0.25);
+    stains(g, s, 10, '40,34,26', 0.3);
+    g.strokeStyle = 'rgba(25,22,18,.7)'; g.lineWidth = 3;
+    for (let i = 0; i <= n; i++) { g.beginPath(); g.moveTo(i * t, 0); g.lineTo(i * t, s); g.moveTo(0, i * t); g.lineTo(s, i * t); g.stroke(); }
+  }),
+  table: () => canvasTex(256, (g, s) => { // plain wood
+    g.fillStyle = '#6e4c2e'; g.fillRect(0, 0, s, s);
+    for (let i = 0; i < 260; i++) {
+      g.strokeStyle = `rgba(${Math.random() < 0.5 ? '40,24,12' : '150,110,70'},${rand(0.05, 0.22)})`;
+      const y = rand(0, s); g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(s / 3, y + rand(-4, 4), s * 2 / 3, y + rand(-4, 4), s, y); g.stroke();
+    }
+  }),
   target: () => canvasTex(256, (g, s) => {
     g.fillStyle = '#e8e2cf'; g.fillRect(0, 0, s, s);
     g.fillStyle = '#26282a'; // silhouette
@@ -181,6 +215,11 @@ const KINDS: Record<Material, Kind> = {
   crate: { tile: null, roughness: 0.85 },
   drum: { tile: null, roughness: 0.5, metalness: 0.4 },
   target: { tile: null, roughness: 0.9 },
+  plaster: { tile: 3, roughness: 0.95 },
+  slab: { tile: 2, roughness: 0.8 },
+  stairs: { tex: 'concrete', tile: 1.5, roughness: 0.9, color: 0xb0aca4 },
+  table: { tile: 1, roughness: 0.7 },
+  car: { tile: null, roughness: 0.5 }, // built by car(), not a textured box
 };
 const matCache: Partial<Record<Material, THREE.MeshStandardMaterial>> = {};
 function levelMaterial(kind: Material) {
@@ -201,25 +240,162 @@ function worldUV(geo: THREE.BoxGeometry, w: number, h: number, d: number, tile: 
   }
 }
 
-export function levelBox(b: Box) {
+// --- prop shapes: collision stays the box, the look gets rounder and busier. All built around the box centre. ---
+const darkMetal = new THREE.MeshStandardMaterial({ color: 0x2b2d2c, metalness: 0.5, roughness: 0.6 });
+const bagMat = new THREE.MeshStandardMaterial({ color: 0x7d7052, roughness: 1 });
+const rounded = (w: number, h: number, d: number, r: number) => new RoundedBoxGeometry(w, h, d, 2, Math.min(r, w / 2, h / 2, d / 2) * 0.99);
+const part = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  return m;
+};
+// Most props have a long axis; build them along x and turn the group when the box runs along z.
+const alongLong = (w: number, d: number, build: (len: number, wid: number) => THREE.Object3D) => {
+  const o = build(Math.max(w, d), Math.min(w, d));
+  if (d > w) o.rotation.y = Math.PI / 2;
+  return o;
+};
+
+function drum(w: number, h: number, d: number) {
+  const r = Math.min(w, d) / 2, g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.97, r * 0.97, h, 20), levelMaterial('drum')));
+  for (const y of [-h / 2 + 0.02, -h * 0.18, h * 0.18, h / 2 - 0.02]) { // rolling hoops and rims
+    const ring = part(new THREE.TorusGeometry(r * 0.98, 0.018, 6, 24), darkMetal, 0, y, 0);
+    ring.rotation.x = Math.PI / 2;
+    g.add(ring);
+  }
+  return g;
+}
+const jersey = (w: number, h: number, d: number) => alongLong(w, d, (len, wid) => { // sloped concrete road barrier
+  const s = new THREE.Shape();
+  s.moveTo(-wid / 2, 0); s.lineTo(wid / 2, 0); s.lineTo(wid * 0.35, h * 0.22); s.lineTo(wid * 0.16, h);
+  s.lineTo(-wid * 0.16, h); s.lineTo(-wid * 0.35, h * 0.22); s.closePath();
+  const geo = new THREE.ExtrudeGeometry(s, { depth: len, bevelEnabled: false }).translate(0, -h / 2, -len / 2).rotateY(Math.PI / 2);
+  return new THREE.Mesh(geo, levelMaterial('barrier'));
+});
+const sandbags = (w: number, h: number, d: number) => alongLong(w, d, (len, wid) => { // staggered rows of soft bags
+  const rows = Math.max(1, Math.round(h / 0.17)), per = Math.max(1, Math.round(len / 0.5)), rowH = h / rows, bag = len / per;
+  const mesh = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 6), bagMat, rows * per);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion();
+  for (let r = 0, i = 0; r < rows; r++) for (let k = 0; k < per; k++, i++) {
+    const x = -len / 2 + bag * (k + 0.5) + (r % 2 ? bag * 0.25 : -bag * 0.25) * (per > 1 ? 1 : 0);
+    m.compose(new THREE.Vector3(Math.max(-len / 2 + bag / 2, Math.min(len / 2 - bag / 2, x)), -h / 2 + rowH * (r + 0.5), 0), q,
+      new THREE.Vector3(bag * 0.53, rowH * 0.62, wid * 0.5));
+    mesh.setMatrixAt(i, m);
+  }
+  return mesh;
+});
+const container = (w: number, h: number, d: number) => alongLong(w, d, (len, wid) => { // corner castings, rails, door bars
+  const g = new THREE.Group();
+  const geo = new THREE.BoxGeometry(len, h, wid);
+  worldUV(geo, len, h, wid, 2.6);
+  g.add(new THREE.Mesh(geo, levelMaterial('container')));
+  for (const x of [-len / 2 + 0.07, len / 2 - 0.07]) for (const z of [-wid / 2 + 0.07, wid / 2 - 0.07]) g.add(part(new THREE.BoxGeometry(0.17, h + 0.02, 0.17), darkMetal, x, 0, z));
+  for (const y of [-h / 2 + 0.06, h / 2 - 0.06]) for (const z of [-wid / 2, wid / 2]) g.add(part(new THREE.BoxGeometry(len, 0.12, 0.06), darkMetal, 0, y, z));
+  for (const z of [-wid * 0.3, -wid * 0.1, wid * 0.1, wid * 0.3]) { // locking bars on the doors at one end
+    g.add(part(new THREE.CylinderGeometry(0.022, 0.022, h * 0.92, 6), darkMetal, len / 2 + 0.03, 0, z));
+    g.add(part(new THREE.BoxGeometry(0.05, 0.04, 0.12), darkMetal, len / 2 + 0.05, -h * 0.05, z + 0.05));
+  }
+  return g;
+});
+function table(w: number, h: number, d: number) {
+  const g = new THREE.Group(), wood = levelMaterial('table');
+  g.add(part(rounded(w, 0.05, d, 0.015), wood, 0, h / 2 - 0.025, 0));
+  for (const x of [-w / 2 + 0.06, w / 2 - 0.06]) for (const z of [-d / 2 + 0.06, d / 2 - 0.06]) g.add(part(new THREE.BoxGeometry(0.05, h - 0.05, 0.05), wood, x, -0.025, z));
+  return g;
+}
+const PAINT = [0x6b2a22, 0x2f4a66, 0xb8b4aa, 0x4d5638, 0x3a3a3c];
+const glassMat = new THREE.MeshStandardMaterial({ color: 0x141a20, metalness: 0.8, roughness: 0.15 });
+const tyreMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 });
+const lampMat = new THREE.MeshStandardMaterial({ color: 0xffeccc, emissive: 0x554433 });
+const car = (w: number, h: number, d: number) => alongLong(w, d, (len, wid) => { // abandoned sedan
+  const g = new THREE.Group();
+  const paint = new THREE.MeshStandardMaterial({ color: PAINT[Math.floor(Math.random() * PAINT.length)], metalness: 0.35, roughness: 0.55 });
+  const base = -h / 2;
+  g.add(part(rounded(len, 0.6, wid, 0.14), paint, 0, base + 0.52, 0));                  // body
+  g.add(part(rounded(len * 0.5, 0.5, wid * 0.88, 0.12), glassMat, -len * 0.04, base + 1.02, 0)); // cabin glass
+  g.add(part(rounded(len * 0.46, 0.06, wid * 0.86, 0.03), paint, -len * 0.04, base + 1.27, 0));  // roof
+  for (const x of [-len * 0.32, len * 0.32]) for (const z of [-wid / 2 + 0.1, wid / 2 - 0.1]) {
+    const tyre = part(new THREE.CylinderGeometry(0.31, 0.31, 0.22, 16), tyreMat, x, base + 0.31, z);
+    tyre.rotation.x = Math.PI / 2;
+    g.add(tyre);
+  }
+  for (const z of [-wid * 0.33, wid * 0.33]) g.add(part(new THREE.BoxGeometry(0.04, 0.1, 0.22), lampMat, len / 2, base + 0.62, z)); // headlights
+  g.add(part(new THREE.BoxGeometry(0.06, 0.12, wid * 0.9), darkMetal, len / 2 + 0.02, base + 0.36, 0));  // bumpers
+  g.add(part(new THREE.BoxGeometry(0.06, 0.12, wid * 0.9), darkMetal, -len / 2 - 0.02, base + 0.36, 0));
+  return g;
+});
+
+export function levelBox(b: Box): THREE.Object3D {
   const kind: Material = b[6] || 'concrete';
   const [w, h, d] = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
-  let mesh: THREE.Mesh;
-  if (kind === 'drum') { // collision stays a box; looks like an oil drum
-    mesh = new THREE.Mesh(new THREE.CylinderGeometry(Math.min(w, d) / 2, Math.min(w, d) / 2, h, 20), levelMaterial(kind));
-  } else {
+  let obj: THREE.Object3D;
+  if (kind === 'drum') obj = drum(w, h, d);
+  else if (kind === 'barrier') obj = jersey(w, h, d);
+  else if (kind === 'sandbag') obj = sandbags(w, h, d);
+  else if (kind === 'container') obj = container(w, h, d);
+  else if (kind === 'table') obj = table(w, h, d);
+  else if (kind === 'car') obj = car(w, h, d);
+  else if (kind === 'crate') obj = new THREE.Mesh(rounded(w, h, d, 0.04), levelMaterial(kind));
+  else {
     const geo = new THREE.BoxGeometry(w, h, d);
     const tile = KINDS[kind]?.tile;
     if (tile) worldUV(geo, w, h, d, tile);
     let mat: THREE.Material | THREE.Material[] = levelMaterial(kind);
     if (kind === 'target') mat = (mat as THREE.MeshStandardMaterial).clone(); // targets flash individually
     if (kind === 'building') mat = [mat, mat, roofMat, roofMat, mat, mat] as THREE.Material[];
-    mesh = new THREE.Mesh(geo, mat);
+    obj = new THREE.Mesh(geo, mat);
+    if (kind === 'building') { // cornice and a mid-height ledge break up the slab
+      obj.add(part(new THREE.BoxGeometry(w + 0.3, 0.25, d + 0.3), roofMat, 0, h / 2 - 0.12, 0));
+      if (h > 4) obj.add(part(new THREE.BoxGeometry(w + 0.12, 0.1, d + 0.12), roofMat, 0, 0, 0));
+    }
   }
-  mesh.position.set((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
-  mesh.castShadow = kind !== 'floor';
-  mesh.receiveShadow = true;
-  return mesh;
+  obj.position.set((b[0] + b[3]) / 2, (b[1] + b[4]) / 2, (b[2] + b[5]) / 2);
+  obj.traverse(o => {
+    if (!(o instanceof THREE.Mesh)) return;
+    o.castShadow = kind !== 'floor' && kind !== 'slab';
+    o.receiveShadow = true;
+  });
+  return obj;
+}
+
+// --- doors: a static frame plus a panel on a hinge pivot (rotate the pivot to open) ---
+const doorMat = new THREE.MeshStandardMaterial({ color: 0x4a3a2a, roughness: 0.75 });
+export function doorMesh(door: Door) {
+  const b = door.box, alongX = b[3] - b[0] >= b[5] - b[2];
+  const len = alongX ? b[3] - b[0] : b[5] - b[2], h = b[4] - b[1];
+  const cx = (b[0] + b[3]) / 2, cz = (b[2] + b[5]) / 2;
+  const base = alongX ? 0 : -Math.PI / 2; // local +x runs along the opening
+  const sign = door.hinge === 'min' ? 1 : -1;
+  const frame = new THREE.Group();
+  frame.position.set(cx, b[1], cz);
+  frame.rotation.y = base;
+  for (const x of [-len / 2 - 0.04, len / 2 + 0.04]) frame.add(part(new THREE.BoxGeometry(0.08, h + 0.08, 0.3), darkMetal, x, (h + 0.08) / 2, 0)); // jambs
+  frame.add(part(new THREE.BoxGeometry(len + 0.16, 0.08, 0.3), darkMetal, 0, h + 0.04, 0)); // head
+  const pivot = new THREE.Group();
+  pivot.position.set(alongX ? cx - (sign * len) / 2 : cx, b[1], alongX ? cz : cz - (sign * len) / 2);
+  pivot.rotation.y = base;
+  const panel = part(new THREE.BoxGeometry(len - 0.02, h - 0.02, 0.06), doorMat, (sign * len) / 2, h / 2, 0);
+  for (const z of [-0.035, 0.035]) {
+    for (const y of [h * 0.3, h * 0.7]) panel.add(part(new THREE.BoxGeometry(len * 0.6, h * 0.28, 0.01), doorMat, 0, y - h / 2, z)); // raised panels
+    panel.add(part(new THREE.SphereGeometry(0.035, 8, 6), darkMetal, sign * (len / 2 - 0.12), 0, z * 1.6)); // knob
+  }
+  pivot.add(panel);
+  for (const o of [frame, pivot]) o.traverse(m => { if (m instanceof THREE.Mesh) { m.castShadow = true; m.receiveShadow = true; } });
+  return { frame, pivot, base, sign };
+}
+
+// --- a weapon lying on a floor or table, with a faint ring so it can be spotted in the dark ---
+const pickupGlow = new THREE.MeshBasicMaterial({ color: 0xffb35c, transparent: true, opacity: 0.35, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+export function pickupMesh(kind: WeaponKind) {
+  const g = new THREE.Group();
+  const gun = makeGun(kind);
+  gun.group.rotation.z = Math.PI / 2; // lying on its side
+  gun.group.position.set(0, 0.035, 0.35);
+  const ring = part(new THREE.RingGeometry(0.42, 0.5, 32), pickupGlow, 0, 0.01, 0);
+  ring.rotation.x = -Math.PI / 2;
+  g.add(gun.group, ring);
+  return g;
 }
 
 // Sodium street lamp: pole, arm reaching toward x = 0, glowing head, a faint light cone and the light itself.
@@ -428,6 +604,21 @@ const GUNS: Record<WeaponKind, () => Gun> = {
       part(box(0.047, 0.12, 0.022), M.dark, 0, -0.06, 0.31, 0.08), // recoil pad
     ];
     return finishGun(g, { muzzle: [0.035, -0.72], stock, grip: V(0, -0.06, 0.03), fore: V(0, -0.03, -0.32), sight: V(0, 0.052, -0.04), adsDist: 0.34, flashSize: 0.32, pump, butt: 0.32 });
+  },
+  pistol() { // G17: polymer frame, steel slide, held out at arm's length (no stock)
+    const { g, part } = gunKit();
+    part(box(0.03, 0.034, 0.19), M.blued, 0, 0.032, -0.095); // slide
+    for (let z = -0.01; z > -0.05; z -= 0.012) part(box(0.032, 0.022, 0.004), M.dark, 0, 0.034, z); // rear serrations
+    part(box(0.004, 0.012, 0.04), M.dark, 0.016, 0.034, -0.1); // ejection port
+    part(box(0.028, 0.024, 0.17), M.dark, 0, 0.004, -0.085); // frame / dust cover
+    part(cyl(0.006, 0.02), M.metal, 0, 0.032, -0.195); // barrel crown
+    part(box(0.03, 0.105, 0.046), M.dark, 0, -0.058, -0.005, -0.22); // grip
+    part(box(0.032, 0.01, 0.05), M.dark, 0, -0.11, 0.008, -0.22); // mag base plate
+    part(box(0.005, 0.005, 0.05), M.dark, 0, -0.022, -0.06); // trigger guard
+    part(box(0.004, 0.018, 0.005), M.metal, 0, -0.012, -0.055); // trigger
+    part(box(0.004, 0.008, 0.006), M.metal, 0, 0.053, -0.175); // front sight
+    for (const x of [-0.008, 0.008]) part(box(0.006, 0.008, 0.008), M.metal, x, 0.053, -0.01); // rear sight notch
+    return finishGun(g, { muzzle: [0.032, -0.2], stock: [], grip: V(0, -0.06, 0.0), fore: V(0, -0.075, 0.025), sight: V(0, 0.054, -0.01), adsDist: 0.32, flashSize: 0.14, butt: 0.33 });
   },
   sniper() { // bolt-action M24 with scope and folded bipod
     const { g, part } = gunKit();
