@@ -37,7 +37,7 @@ export const WEAPONS: Record<WeaponKind, Weapon> = {
   },
   shotgun: {
     name: 'M870', mag: 6, fireMs: 850, reloadMs: 3000, auto: false, pellets: 9,
-    damage: 11, headMul: 1.5, range: 30,
+    damage: 14, headMul: 1.5, range: 30,
     spread: 0.075, adsSpread: 0.055, kick: 0.06, kickH: 0.012, recover: 5,
     adsFov: 62, adsMs: 200, speed: 0.95,
   },
