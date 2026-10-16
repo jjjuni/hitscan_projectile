@@ -520,8 +520,8 @@ export interface Soldier {
   gun: Gun;
   weapon: WeaponKind;
   setWeapon(kind: WeaponKind): void;
-  // speed in m/s, pitch in radians (up positive)
-  update(dt: number, speed: number, pitch: number, alive: boolean, crouch: boolean): void;
+  // fwd/side: velocity in m/s relative to where the soldier faces (+fwd ahead, +side to the right); pitch in radians (up positive)
+  update(dt: number, fwd: number, side: number, pitch: number, alive: boolean, crouch: boolean): void;
 }
 
 // Feet at origin, facing -z, 1.8m tall.
@@ -619,19 +619,24 @@ export function makeSoldier(team: Team, weapon: WeaponKind = 'rifle'): Soldier {
   let phase = 0, fall = 0, crouchT = 0;
   const self: Soldier = {
     root, setWeapon, gun: undefined!, weapon, // filled by setWeapon below
-    update(dt, speed, pitch, alive, crouch) {
+    update(dt, fwd, side, pitch, alive, crouch) {
       crouchT += ((crouch ? 1 : 0) - crouchT) * Math.min(1, dt * 12);
       const c = crouchT;
+      const speed = Math.hypot(fwd, side);
+      const fx = speed > 0.1 ? fwd / speed : 0, sx = speed > 0.1 ? side / speed : 0; // direction of travel
       const amt = Math.min(speed / 5, 1) * (1 - c * 0.4);
-      phase += dt * speed * (4.4 + c * 2);
+      phase += dt * speed * (1.6 + c * 1.2); // ~1.5 strides/s at a 6 m/s run
       legs.forEach(({ thigh, knee, ankle }, i) => {
         const p = phase + i * Math.PI;
-        thigh.rotation.x = c * 1.25 + Math.sin(p) * 0.65 * amt;
-        knee.rotation.x = -c * 1.9 - Math.max(0, Math.cos(p)) * 0.85 * amt;
-        ankle.rotation.x = c * 0.6 + Math.max(0, -Math.sin(p)) * 0.3 * amt;
+        const swing = Math.sin(p) * amt;
+        thigh.rotation.x = c * 1.25 + swing * 0.65 * fx; // forward/back stride (negative fx walks backwards)
+        thigh.rotation.z = swing * 0.35 * sx;           // side-step: legs open and close sideways
+        knee.rotation.x = -c * 1.9 - Math.max(0, Math.cos(p)) * 0.85 * amt; // lift the foot on every step
+        ankle.rotation.x = c * 0.6 + Math.max(0, -Math.sin(p)) * 0.3 * amt * Math.abs(fx);
       });
       hips.position.y = 0.95 - 0.37 * c - 0.03 * amt + Math.abs(Math.cos(phase)) * 0.03 * amt;
-      hips.rotation.y = Math.sin(phase) * 0.12 * amt;
+      hips.rotation.y = Math.sin(phase) * 0.12 * amt * fx;
+      hips.rotation.z = Math.sin(phase) * 0.05 * amt * sx; // weight shifts side to side when strafing
       const lean = 0.05 * amt + 0.3 * c;
       spine.rotation.y = -hips.rotation.y; // shoulders stay square to the aim
       spine.rotation.x = pitch * 0.5 - lean;

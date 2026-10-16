@@ -33,7 +33,7 @@ export interface Engine {
 type ViewGun = Gun & { ads: THREE.Vector3 };
 type StdMesh = THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
 interface Target { box: Box; mesh: StdMesh }
-interface Other { soldier: Soldier; mesh: THREE.Group; target: THREE.Vector3; speed: number; pitch: number; alive: boolean; crouch: boolean }
+interface Other { soldier: Soldier; mesh: THREE.Group; target: THREE.Vector3; fwd: number; side: number; pitch: number; alive: boolean; crouch: boolean }
 
 const T = (x: number, z: number, d = 0.06): Box => [x - 0.5, 0.2, z, x + 0.5, 2.0, z + d]; // paper target on a stand
 export const RANGE: Level & { spawn: Vec3 } = {
@@ -502,7 +502,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     const soldier = makeSoldier(team);
     soldier.root.position.set(...pos);
     scene.add(soldier.root);
-    others.set(id, { soldier, mesh: soldier.root, target: new THREE.Vector3(...pos), speed: 0, pitch: 0, alive: true, crouch: false });
+    others.set(id, { soldier, mesh: soldier.root, target: new THREE.Vector3(...pos), fwd: 0, side: 0, pitch: 0, alive: true, crouch: false });
   }
   function clearOthers() {
     for (const p of others.values()) scene.remove(p.mesh);
@@ -537,7 +537,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     updateRecoil(dt, now);
     for (const p of others.values()) {
       p.mesh.position.lerp(p.target, Math.min(1, dt * 15));
-      p.soldier.update(dt, p.speed, p.pitch, p.alive, p.crouch);
+      p.soldier.update(dt, p.fwd, p.side, p.pitch, p.alive, p.crouch);
     }
     updateViewGun(dt, now);
     updatePopups(now);
@@ -577,8 +577,12 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
       for (const [id, pos, yaw, alive, pitch, crouch, weapon] of list) {
         const p = others.get(id);
         if (!p) continue;
-        const moved = Math.hypot(pos[0] - p.target.x, pos[2] - p.target.z) / 0.05;
-        p.speed += (Math.min(moved, 8) - p.speed) * 0.5;
+        // Velocity since the last snapshot, turned into the soldier's own frame (facing -z rotated by yaw).
+        const vx = (pos[0] - p.target.x) / 0.05, vz = (pos[2] - p.target.z) / 0.05;
+        const k = Math.min(1, 8 / (Math.hypot(vx, vz) || 1)); // ignore teleports (respawn)
+        const sin = Math.sin(yaw), cos = Math.cos(yaw);
+        p.fwd += ((-vx * sin - vz * cos) * k - p.fwd) * 0.5;
+        p.side += ((vx * cos - vz * sin) * k - p.side) * 0.5;
         p.target.set(...pos);
         p.mesh.rotation.y = yaw;
         Object.assign(p, { pitch, alive, crouch });
