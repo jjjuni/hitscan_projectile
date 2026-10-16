@@ -36,6 +36,7 @@ export interface Level {
   targets?: Box[];
   spawn?: Vec3;
   look?: Vec3;
+  lamps?: [x: number, z: number][]; // sodium lamp posts (visual only), arm points toward x = 0
 }
 
 export const MAP: Level & { spawns: Record<Team, Vec3[]> } = {
@@ -44,6 +45,10 @@ export const MAP: Level & { spawns: Record<Team, Vec3[]> } = {
     [-26, 0, -51, 26, 6, -50, 'wall'], [-26, 0, 50, 26, 6, 51, 'wall'], [-26, 0, -50, -25, 6, 50, 'wall'], [25, 0, -50, 26, 6, 50, 'wall'],
     [-3, 0, -1.25, 3, 2.6, 1.25, 'container'], [-1.5, 2.6, -1.25, 4.5, 5.2, 1.25, 'container'],
     ...half, ...half.map(mirror),
+  ],
+  lamps: [
+    [-24.3, -40], [24.3, 40], [24.3, -22], [-24.3, 22], [-24.3, -6], [24.3, 6], // along the side walls
+    [-7.5, -34], [7.5, 34], [6.5, -13], [-6.5, 13], // mid field, so fights in the middle stay readable
   ],
   spawns: {
     A: [[-4.5, 0, -46], [-1.5, 0, -46], [1.5, 0, -46], [4.5, 0, -46]],

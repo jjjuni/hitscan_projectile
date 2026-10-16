@@ -1,36 +1,37 @@
-/* Range signage: slate bunker panels, the same yellow as the range targets, team red/blue. */
+/* Night yard: gunmetal panels, the same sodium-lamp orange as the map lighting, team red/blue. */
 :root {
-  --slate: #26302e;
-  --slate-2: #313d3a;
-  --line: #4a5753;
-  --chalk: #e8eae3;
-  --muted: #95a29c;
-  --yellow: #f2c230;
-  --red: #e5483e;
-  --blue: #4a86e8;
+  --slate: rgba(20, 24, 28, .92);
+  --slate-2: #222930;
+  --line: #3a434b;
+  --chalk: #d8dcd9;
+  --muted: #858f96;
+  --amber: #f0973a;
+  --red: #d8392f;
+  --blue: #3a76d6;
+  --display: 'Saira Condensed', 'IBM Plex Sans KR', sans-serif;
   --cut: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
 }
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; font: 15px/1.5 'IBM Plex Sans KR', system-ui, sans-serif; color: var(--chalk); background: #000; }
 canvas { display: block; }
-h1, h2, h3, #score, #hpNum, #center, .vs { font-family: 'Black Han Sans', 'IBM Plex Sans KR', sans-serif; font-weight: 400; letter-spacing: .01em; }
+h1, h2, h3, #score, #hpNum, #center, .vs { font-family: var(--display); font-weight: 800; letter-spacing: .02em; }
 h2 { font-size: 30px; line-height: 1.1; margin: 0; }
 h3 { font-size: 18px; margin: 0 0 10px; }
 button, input { font: inherit; color: inherit; }
 .hidden { display: none !important; }
-:focus-visible { outline: 2px solid var(--yellow); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--amber); outline-offset: 2px; }
 
 input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 2px; background: #1c2422; width: 100%; }
 input:disabled { opacity: .4; }
 button { padding: 8px 16px; border: 0; border-radius: 2px; cursor: pointer; font-weight: 600; }
 button:disabled { opacity: .35; cursor: not-allowed; }
-.primary { background: var(--yellow); color: #1a1a14; clip-path: var(--cut); padding: 10px 22px; }
+.primary { background: var(--amber); color: #1b120a; clip-path: var(--cut); padding: 10px 22px; }
 .ghost { background: transparent; border: 1px solid var(--line); color: var(--chalk); }
 .ghost:not(:disabled):hover { border-color: var(--chalk); }
 
 /* Range: a sign post in the corner */
-.sign { position: fixed; top: 16px; left: 16px; width: 300px; padding: 16px 18px; background: var(--slate); border-left: 6px solid var(--yellow); }
-.sign h1 { font-size: 34px; line-height: 1; margin: 0 0 12px; color: var(--yellow); }
+.sign { position: fixed; top: 16px; left: 16px; width: 300px; padding: 16px 18px; background: var(--slate); border-left: 6px solid var(--amber); }
+.sign h1 { font-size: 34px; line-height: 1; margin: 0 0 12px; color: var(--amber); }
 .sign label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
 .row { display: flex; gap: 6px; }
 .row button { white-space: nowrap; padding: 8px 14px; }
@@ -38,7 +39,7 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 .keys dt { justify-self: start; padding: 0 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; color: var(--chalk); }
 .keys dd { margin: 0; color: var(--muted); }
 .tally { position: fixed; bottom: 16px; left: 16px; margin: 0; padding: 6px 12px; background: var(--slate); color: var(--muted); }
-.tally b { color: var(--yellow); font-size: 20px; margin-left: 4px; }
+.tally b { color: var(--amber); font-size: 20px; margin-left: 4px; }
 
 /* Overlays */
 .screen { position: fixed; inset: 0; display: grid; place-items: center; background: rgba(10, 14, 13, .55); padding: 16px; }
@@ -48,7 +49,7 @@ button:disabled { opacity: .35; cursor: not-allowed; }
 
 .side { width: 360px; max-height: calc(100vh - 80px); overflow: auto; }
 .side .head { margin-bottom: 4px; padding-bottom: 8px; }
-.side h2 { font-size: 26px; color: var(--yellow); }
+.side h2 { font-size: 26px; color: var(--amber); }
 .side .hint { font-size: 12px; color: var(--muted); margin: 10px 0 0; }
 summary { cursor: pointer; font-weight: 600; padding: 8px 0 4px; }
 .create { padding-top: 6px; }
@@ -61,7 +62,7 @@ summary { cursor: pointer; font-weight: 600; padding: 8px 0 4px; }
 .create label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 .create label input { margin-top: 3px; }
 .create .check { display: flex; align-items: center; gap: 8px; color: var(--chalk); }
-.check input { width: auto; accent-color: var(--yellow); }
+.check input { width: auto; accent-color: var(--amber); }
 .mode { font-size: 13px; color: var(--muted); }
 .mode b { color: var(--chalk); margin-left: 6px; }
 .create .primary { width: 100%; }
@@ -80,8 +81,8 @@ summary { cursor: pointer; font-weight: 600; padding: 8px 0 4px; }
 .slot .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot .tag { font-size: 13px; color: var(--muted); }
 .lamp { width: 10px; height: 10px; border-radius: 50%; background: #1a201f; box-shadow: inset 0 0 0 1px var(--line); flex: none; transition: background .2s, box-shadow .2s; }
-.slot.on .lamp { background: var(--yellow); box-shadow: 0 0 10px var(--yellow); }
-.slot.on .tag { color: var(--yellow); }
+.slot.on .lamp { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+.slot.on .tag { color: var(--amber); }
 #roomResult { min-height: 1.5em; margin: 8px 0; font-weight: 600; }
 #roomResult:empty { display: none; }
 .actions { display: flex; align-items: center; gap: 12px; padding-top: 16px; border-top: 2px solid var(--line); }
@@ -100,7 +101,7 @@ summary { cursor: pointer; font-weight: 600; padding: 8px 0 4px; }
 /* HUD */
 .red { color: var(--red); } .blue { color: var(--blue); }
 #score { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: stretch; font-size: 30px; line-height: 1; }
-#score b { min-width: 60px; padding: 6px 12px; text-align: center; color: #fff; font-weight: 400; }
+#score b { min-width: 60px; padding: 6px 12px; text-align: center; color: #fff; font-weight: 800; }
 #sA { background: var(--red); } #sB { background: var(--blue); }
 #goal { display: flex; align-items: center; font-family: "IBM Plex Sans KR", sans-serif; font-size: 13px; color: var(--chalk); background: var(--slate); padding: 0 12px; }
 #feed { position: fixed; top: 14px; right: 14px; text-align: right; font-size: 14px; }
@@ -133,19 +134,19 @@ summary { cursor: pointer; font-weight: 600; padding: 8px 0 4px; }
 
 /* Weapon + ammo, bottom right */
 #weaponHud { position: fixed; right: 20px; bottom: 20px; text-align: right; pointer-events: none; text-shadow: 0 2px 6px rgba(0,0,0,.6); }
-#weaponHud .ammo { font-family: 'Black Han Sans', sans-serif; line-height: 1; }
-#wMag { font-size: 48px; font-weight: 400; }
+#weaponHud .ammo { font-family: var(--display); font-weight: 800; line-height: 1; }
+#wMag { font-size: 52px; }
 #wMag.low { color: var(--red); }
 #wMax { font-size: 20px; color: var(--chalk); margin-left: 6px; }
 #wName { font-weight: 600; }
-#wState { color: var(--yellow); margin-left: 6px; }
+#wState { color: var(--amber); margin-left: 6px; }
 #slots { list-style: none; padding: 0; margin: 0 0 8px; display: flex; gap: 4px; justify-content: flex-end; font-size: 12px; }
 #slots li { padding: 2px 8px; background: rgba(38, 48, 46, .8); color: var(--muted); }
-#slots li.on { background: var(--yellow); color: #1a1a14; text-shadow: none; }
+#slots li.on { background: var(--amber); color: #1a1a14; text-shadow: none; }
 
 /* Range damage numbers */
-.dmg { position: fixed; left: 0; top: 0; pointer-events: none; font-family: 'Black Han Sans', sans-serif; font-size: 26px; color: var(--chalk); text-shadow: 0 2px 4px #000, 0 0 2px #000; }
-.dmg.head { color: var(--yellow); font-size: 32px; }
+.dmg { position: fixed; left: 0; top: 0; pointer-events: none; font-family: var(--display); font-weight: 800; font-size: 26px; color: var(--chalk); text-shadow: 0 2px 4px #000, 0 0 2px #000; }
+.dmg.head { color: var(--amber); font-size: 32px; }
 
 /* Damage direction: arcs on a ring around the screen centre, rotated toward the shooter */
 #hurtRing { position: fixed; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; }

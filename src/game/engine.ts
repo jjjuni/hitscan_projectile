@@ -3,7 +3,7 @@ import { PointerLockControls } from 'three/addons/controls/PointerLockControls.j
 import { MAP, EYE, CROUCH_EYE, PLAYER_H, CROUCH_H, PLAYER_R, rayAABB, rayPlayer, type Box, type Level, type Team, type Vec3 } from '../../shared/map.ts';
 import { WEAPONS, SLOTS, SWITCH_MS, fullMags, type Weapon, type WeaponKind } from '../../shared/weapons.ts';
 import type { ClientMsg, Snap } from '../../shared/protocol.ts';
-import { levelBox, makeGun, makeSoldier, holeMaterial, type Gun, type Soldier } from './models.ts';
+import { levelBox, lampPost, skyGradient, makeGun, makeSoldier, holeMaterial, type Gun, type Soldier } from './models.ts';
 import { listener, SOUNDS, SHOT_VOLUME, playLocal, playAt, unlockAudio } from './sound.ts';
 
 export interface EngineEls {
@@ -47,6 +47,7 @@ export const RANGE: Level & { spawn: Vec3 } = {
   targets: [T(-6, -10), T(-2, -16), T(3, -22), T(7, -13), T(-8, -35), T(0, -45), T(8, -60), T(-4, -85), T(4, -92)],
   spawn: [0, 0, 6],
   look: [0, EYE, -10],
+  lamps: [[-15.5, 4], [15.5, -12], [-15.5, -32], [15.5, -54], [-15.5, -78]],
 };
 const BASE_SPEED = 6, JUMP = 6, GRAVITY = 18, FOV = 75;
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
@@ -70,18 +71,20 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.35;
   renderer.autoClear = false;
   els.mount.append(renderer.domElement);
-  const SKY = 0xa9bccb;
+  // Night: dark overcast sky, haze that swallows the far end, sodium lamps doing most of the lighting.
+  // Night: deep blue overhead fading to a warm, lamp-lit haze at the horizon; fog uses the horizon colour.
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(SKY);
-  scene.fog = new THREE.Fog(SKY, 60, 190);
+  scene.background = skyGradient();
+  scene.fog = new THREE.Fog(0x2b2c2e, 28, 130);
   const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.02, 400);
   camera.add(listener); // ears follow the camera
   listen(window, 'pointerdown', unlockAudio); // browsers start audio only after a user gesture
   listen(window, 'keydown', unlockAudio);
-  scene.add(new THREE.HemisphereLight(0xdfe8f0, 0x4a4436, 1.1));
-  const sun = new THREE.DirectionalLight(0xfff1dc, 2.4);
+  scene.add(new THREE.HemisphereLight(0x5a6c88, 0x241c14, 1.15));
+  const sun = new THREE.DirectionalLight(0x8ea4cc, 1.5); // cold moonlight, still casts the long shadows
   sun.position.set(30, 45, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(4096, 4096);
@@ -89,13 +92,13 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   sun.shadow.bias = -0.0005;
   sun.shadow.normalBias = 0.04;
   scene.add(sun);
-  const muzzleLight = new THREE.PointLight(0xffb060, 0, 8);
+  const muzzleLight = new THREE.PointLight(0xffb060, 0, 12);
   scene.add(muzzleLight);
 
   // First-person guns live in their own scene, drawn after clearing depth so they never clip into walls.
   const viewScene = new THREE.Scene();
-  viewScene.add(new THREE.HemisphereLight(0xdfe8f0, 0x4a4436, 1.3));
-  const viewSun = new THREE.DirectionalLight(0xfff1dc, 1.8);
+  viewScene.add(new THREE.HemisphereLight(0x5a6a84, 0x1a1510, 0.9));
+  const viewSun = new THREE.DirectionalLight(0xffc89a, 0.8); // warm key so the gun reads against the dark
   viewSun.position.set(18, 30, 10);
   viewScene.add(viewSun);
   const viewRoot = new THREE.Group(); // follows the camera
@@ -139,6 +142,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
     scene.add(level);
     walls = def.walls;
     for (const w of walls) level.add(levelBox(w));
+    for (const [x, z] of def.lamps ?? []) level.add(lampPost(x, z));
     targets = (def.targets || []).map(box => {
       const mesh = levelBox([box[0], box[1], box[2], box[3], box[4], box[5], 'target']) as StdMesh;
       level.add(mesh);
@@ -298,7 +302,7 @@ export function createEngine(els: EngineEls, hooks: EngineHooks): Engine {
   function muzzleFlash(gun: Gun) {
     gun.flash();
     gun.muzzle.getWorldPosition(muzzleLight.position);
-    muzzleLight.intensity = 6;
+    muzzleLight.intensity = 40; // the flash lights up the dark around the shooter
     setTimeout(() => { muzzleLight.intensity = 0; }, 45);
   }
   // Bullet holes: stick to the wall/prop/target face the shot ended on, fade out after a while.

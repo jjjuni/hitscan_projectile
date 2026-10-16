@@ -222,6 +222,46 @@ export function levelBox(b: Box) {
   return mesh;
 }
 
+// Sodium street lamp: pole, arm reaching toward x = 0, glowing head, a faint light cone and the light itself.
+const lampMetal = new THREE.MeshStandardMaterial({ color: 0x2a2d30, metalness: 0.5, roughness: 0.6 });
+const lampGlow = new THREE.MeshBasicMaterial({ color: 0xffb35c });
+// Light shaft: strongest at the lamp, fading out toward the ground.
+const lampCone = new THREE.MeshBasicMaterial({
+  color: 0xff9a3c, transparent: true, opacity: 0.16, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  alphaMap: canvasTex(64, (g, s) => {
+    const grd = g.createLinearGradient(0, 0, 0, s); // cone uv: v = 1 at the top (lamp), 0 at the base
+    grd.addColorStop(0, '#fff'); grd.addColorStop(0.45, '#555'); grd.addColorStop(1, '#000');
+    g.fillStyle = grd; g.fillRect(0, 0, s, s);
+  }),
+});
+// Sky backdrop: deep blue overhead, warm sodium haze near the horizon.
+export const skyGradient = () => canvasTex(256, (g, s) => {
+  const grd = g.createLinearGradient(0, 0, 0, s);
+  grd.addColorStop(0, '#0b1017'); grd.addColorStop(0.55, '#1c2632'); grd.addColorStop(0.85, '#3a3430'); grd.addColorStop(1, '#4a3a2c');
+  g.fillStyle = grd; g.fillRect(0, 0, s, s);
+});
+export function lampPost(x: number, z: number, h = 6.5) {
+  const g = new THREE.Group();
+  g.position.set(x, 0, z);
+  const dir = x > 0 ? -1 : 1; // arm reaches inward
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, h, 8), lampMetal);
+  pole.position.y = h / 2;
+  const arm = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 0.08), lampMetal);
+  arm.position.set(dir * 0.8, h, 0);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.12, 0.3), lampMetal);
+  head.position.set(dir * 1.5, h - 0.05, 0);
+  const lens = new THREE.Mesh(new THREE.PlaneGeometry(0.5, 0.22), lampGlow);
+  lens.rotation.x = Math.PI / 2;
+  lens.position.set(dir * 1.5, h - 0.12, 0);
+  const cone = new THREE.Mesh(new THREE.ConeGeometry(3.2, h, 20, 1, true), lampCone);
+  cone.position.set(dir * 1.5, h / 2 - 0.1, 0);
+  const light = new THREE.PointLight(0xff9d48, 45, 34, 1.2); // low decay = wide, soft falloff
+  light.position.set(dir * 1.5, h - 0.4, 0);
+  pole.castShadow = arm.castShadow = head.castShadow = true;
+  g.add(pole, arm, head, lens, cone, light);
+  return g;
+}
+
 // ---------- guns ----------
 const M = {
   metal: new THREE.MeshStandardMaterial({ color: 0x45484d, metalness: 0.3, roughness: 0.45 }),
